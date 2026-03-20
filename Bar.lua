@@ -31,20 +31,25 @@ local function HasAbundanceTalent()
     return false
 end
 
+local trackedUnits = { "player" }
+
 local function GetTrackedUnits()
-    local units = { "player" }
+    trackedUnits[1] = "player"
+    for index = #trackedUnits, 2, -1 do
+        trackedUnits[index] = nil
+    end
 
     if IsInRaid() then
         for index = 1, GetNumGroupMembers() do
-            units[#units + 1] = "raid" .. index
+            trackedUnits[#trackedUnits + 1] = "raid" .. index
         end
     elseif IsInGroup() then
         for index = 1, GetNumSubgroupMembers() do
-            units[#units + 1] = "party" .. index
+            trackedUnits[#trackedUnits + 1] = "party" .. index
         end
     end
 
-    return units
+    return trackedUnits
 end
 
 local function ScanUnitByName(unit, expirations, maxDurationRef)
@@ -68,28 +73,21 @@ local function ScanUnitByName(unit, expirations, maxDurationRef)
 end
 
 local function CollectUnitAuraExpirationsModern(unit, expirations, maxDurationRef)
-    if not (C_UnitAuras and C_UnitAuras.GetAuraSlots and C_UnitAuras.GetAuraDataBySlot) then
+    if not (C_UnitAuras and C_UnitAuras.GetAuraDataBySpellName) then
         return false
     end
 
     local now = GetTime()
-    local slots = { C_UnitAuras.GetAuraSlots(unit, "HELPFUL|PLAYER") }
     local added = false
 
-    for index = 2, #slots do
-        local slot = slots[index]
-        if type(slot) == "number" then
-            local aura = C_UnitAuras.GetAuraDataBySlot(unit, slot)
-            if aura then
-                local spellId = rawget(aura, "spellId")
-                local name = rawget(aura, "name")
-                local duration = rawget(aura, "duration") or 0
-                local expirationTime = rawget(aura, "expirationTime") or 0
-                if ((spellId and TRACKED_HOT_SPELL_IDS[spellId]) or (name and TRACKED_HOT_NAMES[name])) and expirationTime > now then
-                    expirations[#expirations + 1] = expirationTime
-                    maxDurationRef.value = math.max(maxDurationRef.value or 0, duration)
-                    added = true
-                end
+    for _, spellName in pairs(TRACKED_HOT_SPELL_NAMES) do
+        local aura = C_UnitAuras.GetAuraDataBySpellName(unit, spellName, "HELPFUL|PLAYER")
+        if aura then
+            local expirationTime = aura.expirationTime or 0
+            if expirationTime > now then
+                expirations[#expirations + 1] = expirationTime
+                maxDurationRef.value = math.max(maxDurationRef.value or 0, aura.duration or 0)
+                added = true
             end
         end
     end
@@ -292,9 +290,20 @@ local function FormatSeconds(value)
 end
 
 function Addon:GetAbundanceCount()
-    local seen = {}
-    local expirations = {}
+    self.seenUnits = self.seenUnits or {}
+    self.expirations = self.expirations or {}
+
+    local seen = self.seenUnits
+    local expirations = self.expirations
     local maxDurationRef = { value = 0 }
+
+    for key in pairs(seen) do
+        seen[key] = nil
+    end
+
+    for index = #expirations, 1, -1 do
+        expirations[index] = nil
+    end
 
     for _, unit in ipairs(GetTrackedUnits()) do
         local guid = UnitGUID(unit)
@@ -313,7 +322,6 @@ function Addon:GetAbundanceCount()
         maxDurationRef.value = math.max(maxDurationRef.value or 0, abundanceDuration or 0, abundanceExpiration - GetTime())
     end
 
-    self.expirations = expirations
     self.maxDuration = maxDurationRef.value
     local timeline = GetTimelineData(expirations, self.maxDuration)
     return timeline.count
@@ -648,7 +656,13 @@ function Addon:InitializeBar()
         end
     end)
 
-    bar:SetScript("OnUpdate", function()
+    bar.updateElapsed = 0
+    bar:SetScript("OnUpdate", function(_, elapsed)
+        bar.updateElapsed = bar.updateElapsed + elapsed
+        if bar.updateElapsed < 0.2 then
+            return
+        end
+        bar.updateElapsed = 0
         Addon:GetAbundanceCount()
         Addon:UpdateTimelineVisuals()
     end)
