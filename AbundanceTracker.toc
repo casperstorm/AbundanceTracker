@@ -1,0 +1,13 @@
+## Interface: 120001, 120000
+## Interface-Retail: 120001, 120000
+## Title: AbundanceTracker
+## Notes: Track Abundance stacks from your active Rejuvenations
+## Author: casperstorm
+## Version: @project-version@
+## SavedVariables: AbundanceTrackerDB
+## IconTexture: Interface\Icons\Spell_Nature_Abundance
+## X-Curse-Project-ID: 1490781
+
+AbundanceTracker.lua
+Bar.lua
+Config.lua

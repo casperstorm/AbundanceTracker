@@ -1,0 +1,17 @@
+package-as: AbundanceTracker
+
+ignore:
+  - .github
+  - README.md
+  - "*.png"
+  - "**/*.png"
+  - "*.jpg"
+  - "**/*.jpg"
+  - "*.jpeg"
+  - "**/*.jpeg"
+  - "*.webp"
+  - "**/*.webp"
+  - .gitignore
+  - .pkgmeta
+
+enable-nolib-creation: no
