@@ -55,7 +55,7 @@ local function ScanUnitByName(unit, expirations, maxDurationRef)
     local now = GetTime()
     local added = 0
 
-    for spellId, spellName in pairs(TRACKED_HOT_SPELL_NAMES) do
+    for _, spellName in pairs(TRACKED_HOT_SPELL_NAMES) do
         local name, _, _, _, _, duration, expirationTime = UnitAura(unit, spellName, nil, "HELPFUL|PLAYER")
         if name and (expirationTime or 0) > now then
             expirations[#expirations + 1] = expirationTime
@@ -114,7 +114,7 @@ local function CollectUnitAuraExpirations(unit, expirations, maxDurationRef)
     end
 
     if UnitBuff then
-        for spellId, spellName in pairs(TRACKED_HOT_SPELL_NAMES) do
+        for _, spellName in pairs(TRACKED_HOT_SPELL_NAMES) do
             local name, _, _, _, _, duration, expirationTime = UnitBuff(unit, spellName, nil, "PLAYER")
             if name and (expirationTime or 0) > now then
                 expirations[#expirations + 1] = expirationTime
@@ -305,10 +305,6 @@ function Addon:GetAbundanceCount()
     end
 
     local abundanceCount, abundanceExpiration, abundanceDuration = GetAbundanceBuffInfo()
-    self.debugInfo = {
-        expirations = #expirations,
-        abundanceCount = abundanceCount,
-    }
 
     if #expirations == 0 and abundanceCount > 0 and abundanceExpiration > GetTime() then
         for index = 1, math.min(abundanceCount, MAX_STACKS) do
