@@ -13,3 +13,7 @@ Type `/abt` or `/abundance` to open the configuration window.
 - `/abt lock` locks the bar
 - `/abt unlock` unlocks the bar for dragging
 - `/abt reset` resets the bar position
+
+## Inspiration
+
+https://www.curseforge.com/wow/addons/atonementbar
