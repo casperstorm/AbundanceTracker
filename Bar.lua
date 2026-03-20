@@ -196,13 +196,15 @@ local function GetTimelineData(expirations, maxDuration)
         return a > b
     end)
 
-    local currentCount = math.min(#remainingDurations, MAX_STACKS)
+    local totalActive = #remainingDurations
+    local currentCount = math.min(totalActive, MAX_STACKS)
     local dangerThreshold, warningThreshold = GetThresholdConfig()
     local totalDuration = math.max(maxDuration or 0, remainingDurations[1] or 0)
 
     if currentCount == 0 then
         return {
             count = 0,
+            totalActive = 0,
             segments = {},
             totalDuration = totalDuration,
         }
@@ -252,6 +254,7 @@ local function GetTimelineData(expirations, maxDuration)
 
     return {
         count = currentCount,
+        totalActive = totalActive,
         segments = segments,
         totalDuration = totalDuration,
     }
@@ -449,6 +452,7 @@ function Addon:UpdateTimelineVisuals()
 
     local timeline = GetTimelineData(self.expirations or {}, self.maxDuration or 0)
     local count = timeline.count
+    local totalActive = timeline.totalActive or count
     local known = HasAbundanceTalent()
     local inCombatOnly = self:GetSetting("inCombatOnly") == true
     local shouldShow = count > 0 or (known and self:GetSetting("showWhenInactive"))
@@ -463,7 +467,7 @@ function Addon:UpdateTimelineVisuals()
     end
 
     self.bar:Show()
-    self.bar.countText:SetText(tostring(count))
+    self.bar.countText:SetText(tostring(totalActive))
     if self:GetSetting("showCounter") ~= false then
         self.bar.countText:Show()
     else
