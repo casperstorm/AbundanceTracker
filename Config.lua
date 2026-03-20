@@ -78,7 +78,7 @@ end
 
 local function CreateConfigFrame()
     local frame = CreateFrame("Frame", "AbundanceTrackerConfigFrame", UIParent, "BasicFrameTemplateWithInset")
-    frame:SetSize(400, 260)
+    frame:SetSize(400, 380)
     frame:SetPoint("CENTER")
     frame:SetMovable(true)
     frame:EnableMouse(true)
@@ -110,6 +110,21 @@ local function CreateConfigFrame()
     showInactiveCheckbox:SetPoint("TOPLEFT", content, "TOPLEFT", 0, y)
 
     y = y - 40
+
+    local showCountCheckbox = CreateCheckbox(content, "Show stack count beside bar", "showCountText")
+    showCountCheckbox:SetPoint("TOPLEFT", content, "TOPLEFT", 0, y)
+
+    y = y - 40
+
+    CreateSlider(content, "Red below", "dangerThreshold", 1, 12, 1, y)
+
+    y = y - 38
+
+    CreateSlider(content, "Yellow below", "warningThreshold", 1, 12, 1, y)
+
+    y = y - 38
+
+    y = y - 4
 
     CreateSlider(content, "Scale", "scale", 0.5, 2, 0.05, y, function(value)
         return string.format("%.2fx", value)

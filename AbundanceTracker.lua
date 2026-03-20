@@ -10,6 +10,9 @@ local defaults = {
     width = 240,
     height = 22,
     showWhenInactive = true,
+    showCountText = true,
+    dangerThreshold = 5,
+    warningThreshold = 9,
 }
 
 local function InitializeDB()
@@ -125,6 +128,20 @@ SlashCmdList["ABUNDANCETRACKER"] = function(msg)
 
     if msg == "reset" then
         Addon:ResetPosition()
+        return
+    end
+
+    if msg == "debug" then
+        if Addon.DebugAuraScan then
+            Addon:DebugAuraScan()
+        end
+        return
+    end
+
+    if msg == "buffs" then
+        if Addon.DebugPlayerBuffs then
+            Addon:DebugPlayerBuffs()
+        end
         return
     end
 
