@@ -10,6 +10,7 @@ local defaults = {
     width = 200,
     height = 15,
     showWhenInactive = true,
+    inCombatOnly = false,
     showCounter = true,
     showTimers = true,
     showStackLabels = false,

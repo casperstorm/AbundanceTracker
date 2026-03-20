@@ -450,7 +450,12 @@ function Addon:UpdateTimelineVisuals()
     local timeline = GetTimelineData(self.expirations or {}, self.maxDuration or 0)
     local count = timeline.count
     local known = HasAbundanceTalent()
+    local inCombatOnly = self:GetSetting("inCombatOnly") == true
     local shouldShow = count > 0 or (known and self:GetSetting("showWhenInactive"))
+
+    if inCombatOnly and not InCombatLockdown() then
+        shouldShow = false
+    end
 
     if not shouldShow then
         self.bar:Hide()
@@ -649,6 +654,8 @@ function Addon:InitializeBar()
     self.eventFrame:RegisterEvent("GROUP_ROSTER_UPDATE")
     self.eventFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
     self.eventFrame:RegisterEvent("PLAYER_TALENT_UPDATE")
+    self.eventFrame:RegisterEvent("PLAYER_REGEN_DISABLED")
+    self.eventFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
     self.eventFrame:RegisterEvent("UNIT_AURA")
     self.eventFrame:SetScript("OnEvent", function(_, event, unit)
         if event ~= "UNIT_AURA" or not unit or UnitInParty(unit) or UnitInRaid(unit) or UnitIsUnit(unit, "player") then
@@ -656,15 +663,21 @@ function Addon:InitializeBar()
         end
     end)
 
-    bar.updateElapsed = 0
+    bar.visualElapsed = 0
+    bar.scanElapsed = 0
     bar:SetScript("OnUpdate", function(_, elapsed)
-        bar.updateElapsed = bar.updateElapsed + elapsed
-        if bar.updateElapsed < 0.2 then
-            return
+        bar.visualElapsed = bar.visualElapsed + elapsed
+        bar.scanElapsed = bar.scanElapsed + elapsed
+
+        if bar.scanElapsed >= 0.1 then
+            bar.scanElapsed = 0
+            Addon:GetAbundanceCount()
         end
-        bar.updateElapsed = 0
-        Addon:GetAbundanceCount()
-        Addon:UpdateTimelineVisuals()
+
+        if bar.visualElapsed >= 0.03 then
+            bar.visualElapsed = 0
+            Addon:UpdateTimelineVisuals()
+        end
     end)
 
     self:ApplyLayout()

@@ -111,6 +111,11 @@ local function CreateConfigFrame()
 
     y = y - 40
 
+    local inCombatOnlyCheckbox = CreateCheckbox(content, "Hide when out of combat", "inCombatOnly")
+    inCombatOnlyCheckbox:SetPoint("TOPLEFT", content, "TOPLEFT", 0, y)
+
+    y = y - 40
+
     local showCounterCheckbox = CreateCheckbox(content, "Show stack counter", "showCounter")
     showCounterCheckbox:SetPoint("TOPLEFT", content, "TOPLEFT", 0, y)
 
