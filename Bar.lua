@@ -215,11 +215,22 @@ local function GetTimelineData(expirations, maxDuration)
     local warningDuration = currentCount >= dangerThreshold and math.min(remainingDurations[dangerThreshold] or 0, totalDuration) or 0
     local dangerDuration = math.min(remainingDurations[1] or 0, totalDuration)
 
+    local function CountDurationsInRange(startTime, endTime)
+        local countInRange = 0
+        for _, duration in ipairs(remainingDurations) do
+            if duration > startTime and duration <= endTime then
+                countInRange = countInRange + 1
+            end
+        end
+        return countInRange
+    end
+
     if healthyDuration > 0 then
         segments[#segments + 1] = {
             color = "healthy",
             startTime = 0,
             endTime = healthyDuration,
+            stackCount = CountDurationsInRange(0, healthyDuration),
         }
     end
 
@@ -228,6 +239,7 @@ local function GetTimelineData(expirations, maxDuration)
             color = "warning",
             startTime = healthyDuration,
             endTime = warningDuration,
+            stackCount = CountDurationsInRange(healthyDuration, warningDuration),
         }
     end
 
@@ -236,6 +248,7 @@ local function GetTimelineData(expirations, maxDuration)
             color = "danger",
             startTime = warningDuration,
             endTime = dangerDuration,
+            stackCount = CountDurationsInRange(warningDuration, dangerDuration),
         }
     end
 
@@ -267,6 +280,10 @@ local function GetAbundanceBuffInfo()
 end
 
 local function FormatSeconds(value)
+    if Addon:GetSetting("showDecimalTimers") == false then
+        return tostring(math.ceil(value))
+    end
+
     if value < 10 then
         return string.format("%.1f", value)
     end
@@ -304,105 +321,6 @@ function Addon:GetAbundanceCount()
     self.maxDuration = maxDurationRef.value
     local timeline = GetTimelineData(expirations, self.maxDuration)
     return timeline.count
-end
-
-function Addon:DebugAuraScan()
-    local lines = {}
-    local units = GetTrackedUnits()
-
-    for _, unit in ipairs(units) do
-        if UnitExists(unit) then
-            local found = {}
-
-            for spellId, spellName in pairs(TRACKED_HOT_SPELL_NAMES) do
-                local auraName, _, _, _, _, expirationTime = UnitAura and UnitAura(unit, spellName, nil, "HELPFUL|PLAYER")
-                if auraName then
-                    found[#found + 1] = string.format("%s(%d) %.1fs", spellName, spellId, math.max((expirationTime or 0) - GetTime(), 0))
-                end
-            end
-
-            if #found > 0 then
-                lines[#lines + 1] = string.format("%s -> %s", unit, table.concat(found, ", "))
-            end
-        end
-    end
-
-    local abundanceName = ABUNDANCE_SPELL_NAME or "Abundance"
-    local auraName, _, count, _, _, expirationTime = UnitAura and UnitAura("player", abundanceName, nil, "HELPFUL")
-    if auraName then
-        lines[#lines + 1] = string.format("player buff -> %s x%d %.1fs", abundanceName, count or 0, math.max((expirationTime or 0) - GetTime(), 0))
-    else
-        lines[#lines + 1] = "player buff -> Abundance not found"
-    end
-
-    if #lines == 0 then
-        lines[1] = "no tracked auras found"
-    end
-
-    DEFAULT_CHAT_FRAME:AddMessage("AbundanceTracker debug: " .. table.concat(lines, " | "))
-end
-
-function Addon:DebugPlayerBuffs()
-    local lines = {}
-
-    if C_UnitAuras and C_UnitAuras.GetPlayerAuraBySpellID then
-        local abundanceAura = C_UnitAuras.GetPlayerAuraBySpellID(ABUNDANCE_SPELL_ID)
-        if abundanceAura then
-            lines[#lines + 1] = string.format(
-                "player abundance modern id=%s count=%s rem=%.1f",
-                tostring(rawget(abundanceAura, "spellId")),
-                tostring(rawget(abundanceAura, "applications") or rawget(abundanceAura, "count") or 0),
-                math.max((rawget(abundanceAura, "expirationTime") or 0) - GetTime(), 0)
-            )
-        else
-            lines[#lines + 1] = "player abundance modern not found"
-        end
-
-        local slots = { C_UnitAuras.GetAuraSlots("player", "HELPFUL") }
-        local preview = {}
-        for index = 2, math.min(#slots, 12) do
-            local slot = slots[index]
-            if type(slot) == "number" then
-                local aura = C_UnitAuras.GetAuraDataBySlot("player", slot)
-                if aura then
-                    preview[#preview + 1] = string.format(
-                        "%s(id=%s,count=%s)",
-                        tostring(rawget(aura, "name")),
-                        tostring(rawget(aura, "spellId")),
-                        tostring(rawget(aura, "applications") or rawget(aura, "count") or 0)
-                    )
-                end
-            end
-        end
-        if #preview > 0 then
-            lines[#lines + 1] = "modern buffs -> " .. table.concat(preview, ", ")
-        end
-    end
-
-    if UnitBuff then
-        for index = 1, 40 do
-            local name, _, count, _, duration, expirationTime, sourceUnit, _, _, spellId = UnitBuff("player", index)
-            if not name then
-                break
-            end
-
-            lines[#lines + 1] = string.format(
-                "%d:%s id=%s count=%s src=%s rem=%.1f",
-                index,
-                name,
-                tostring(spellId),
-                tostring(count or 0),
-                tostring(sourceUnit),
-                math.max((expirationTime or 0) - GetTime(), 0)
-            )
-        end
-    end
-
-    if #lines == 0 then
-        lines[1] = "no player buffs found"
-    end
-
-    DEFAULT_CHAT_FRAME:AddMessage("AbundanceTracker buffs: " .. table.concat(lines, " | "))
 end
 
 local function GetSegmentColor(count)
@@ -483,15 +401,40 @@ function Addon:ApplyLayout()
     self.bar:SetMovable(not self:GetSetting("locked"))
     self.bar:EnableMouse(not self:GetSetting("locked"))
 
-    self.bar.countText:ClearAllPoints()
-    self.bar.countText:SetPoint("RIGHT", self.bar, "LEFT", -4, 0)
+    local height = self.bar:GetHeight()
+    local showCounter = self:GetSetting("showCounter") ~= false
+    local counterWidth = showCounter and height or 0
+    local counterFontSize = self:GetSetting("counterFontSize") or 12
+    local timerFontSize = self:GetSetting("timerFontSize") or 8
+    local stackLabelFontSize = self:GetSetting("stackLabelFontSize") or 8
 
-    self.bar.background:SetPoint("TOPLEFT", self.bar, "TOPLEFT", 1, -1)
-    self.bar.background:SetPoint("BOTTOMRIGHT", self.bar, "BOTTOMRIGHT", -1, 1)
+    self.bar.countText:SetFont(STANDARD_TEXT_FONT, counterFontSize, "")
+
+    self.bar.bars:ClearAllPoints()
+    self.bar.bars:SetPoint("TOPLEFT", self.bar, "TOPLEFT", counterWidth > 0 and (counterWidth - 1) or 0, 0)
+    self.bar.bars:SetPoint("BOTTOMRIGHT", self.bar, "BOTTOMRIGHT", 0, 0)
+
+    self.bar.counter:ClearAllPoints()
+    if showCounter then
+        self.bar.counter:SetPoint("TOPLEFT", self.bar, "TOPLEFT", 0, 0)
+        self.bar.counter:SetPoint("BOTTOMLEFT", self.bar, "BOTTOMLEFT", 0, 0)
+        self.bar.counter:SetWidth(counterWidth)
+        self.bar.counter:Show()
+    else
+        self.bar.counter:Hide()
+    end
+
+    self.bar.barscontainer:SetPoint("TOPLEFT", self.bar.bars, "TOPLEFT", 1, -1)
+    self.bar.barscontainer:SetPoint("BOTTOMRIGHT", self.bar.bars, "BOTTOMRIGHT", -1, 1)
+
+    self.bar.countText:ClearAllPoints()
+    self.bar.countText:SetPoint("CENTER", self.bar.counter, "CENTER", 0, 0)
 
     for _, segment in ipairs(self.bar.segments) do
         segment:ClearAllPoints()
         segment.label:ClearAllPoints()
+        segment.label:SetFont(STANDARD_TEXT_FONT, timerFontSize, "")
+        segment.stackLabel:SetFont(STANDARD_TEXT_FONT, stackLabelFontSize, "")
     end
 end
 
@@ -512,18 +455,22 @@ function Addon:UpdateTimelineVisuals()
 
     self.bar:Show()
     self.bar.countText:SetText(tostring(count))
-    if self:GetSetting("showCountText") then
+    if self:GetSetting("showCounter") ~= false then
         self.bar.countText:Show()
     else
         self.bar.countText:Hide()
     end
 
-    local barWidth = math.max(self.bar.background:GetWidth(), 1)
+    local barWidth = math.max(self.bar.barscontainer:GetWidth(), 1)
     local totalDuration = math.max(timeline.totalDuration, 0.001)
     local frameWidthUnit = barWidth / totalDuration
     local minInsideWidth = 24
     local previousLabelRight = -math.huge
     local lastLabelByColor = {}
+    local showTimers = self:GetSetting("showTimers") ~= false
+    local showStackLabels = self:GetSetting("showStackLabels") == true
+    local stackLabelOffset = self:GetSetting("stackLabelOffset") or 4
+    local dominantColor = nil
 
     for index, data in ipairs(timeline.segments) do
         local segment = self.bar.segments[index]
@@ -532,12 +479,13 @@ function Addon:UpdateTimelineVisuals()
 
         if rightOffset - leftOffset > 0.5 then
             local r, g, b, a = GetSegmentColorForBand(data.color)
-            segment:SetColorTexture(r, g, b, a)
+            segment:SetVertexColor(r, g, b, a)
             segment:ClearAllPoints()
-            segment:SetPoint("TOPLEFT", self.bar.background, "TOPLEFT", leftOffset, 0)
-            segment:SetPoint("BOTTOMLEFT", self.bar.background, "BOTTOMLEFT", leftOffset, 0)
-            segment:SetPoint("RIGHT", self.bar.background, "LEFT", rightOffset, 0)
+            segment:SetPoint("TOPLEFT", self.bar.barscontainer, "TOPLEFT", leftOffset, 0)
+            segment:SetPoint("BOTTOMLEFT", self.bar.barscontainer, "BOTTOMLEFT", leftOffset, 0)
+            segment:SetPoint("RIGHT", self.bar.barscontainer, "LEFT", rightOffset, 0)
             segment:Show()
+            dominantColor = dominantColor or { r, g, b }
 
             segment.label:SetText(FormatSeconds(data.endTime))
             segment.label:ClearAllPoints()
@@ -548,18 +496,33 @@ function Addon:UpdateTimelineVisuals()
                 segment.label:SetPoint("LEFT", segment, "RIGHT", 3, 0)
             end
 
+            segment.stackLabel:SetText(tostring(data.stackCount or 0))
+            segment.stackLabel:ClearAllPoints()
+            if segmentWidth >= minInsideWidth then
+                segment.stackLabel:SetPoint("TOP", segment.label, "BOTTOM", 0, -stackLabelOffset)
+            else
+                segment.stackLabel:SetPoint("TOPLEFT", segment.label, "BOTTOMLEFT", 0, -stackLabelOffset)
+            end
+
             local labelLeft = segment.label:GetLeft() or 0
             local labelRight = segment.label:GetRight() or 0
-            if labelLeft <= previousLabelRight then
+            if not showTimers or labelLeft <= previousLabelRight then
                 segment.label:Hide()
+                segment.stackLabel:Hide()
             else
                 segment.label:Show()
                 previousLabelRight = labelRight
                 lastLabelByColor[GetSegmentColorKey(data.color)] = segment.label
+                if showStackLabels then
+                    segment.stackLabel:Show()
+                else
+                    segment.stackLabel:Hide()
+                end
             end
         else
             segment:Hide()
             segment.label:Hide()
+            segment.stackLabel:Hide()
         end
     end
 
@@ -571,6 +534,7 @@ function Addon:UpdateTimelineVisuals()
         if segment:IsShown() and segment.label:IsShown() then
             if winningLabel ~= segment.label or seenLabels[winningLabel] then
                 segment.label:Hide()
+                segment.stackLabel:Hide()
             else
                 seenLabels[winningLabel] = true
             end
@@ -580,13 +544,15 @@ function Addon:UpdateTimelineVisuals()
     for index = #timeline.segments + 1, #self.bar.segments do
         self.bar.segments[index]:Hide()
         self.bar.segments[index].label:Hide()
+        self.bar.segments[index].stackLabel:Hide()
     end
 
-    self.bar.tooltipText = string.format(
-        "Abundance: %d active HoTs (%d%% cost reduction / crit).",
-        count,
-        count * 8
-    )
+    if dominantColor then
+        self.bar.countText:SetTextColor(dominantColor[1], dominantColor[2], dominantColor[3], 1)
+    else
+        self.bar.countText:SetTextColor(1, 1, 1, 1)
+    end
+
 end
 
 function Addon:UpdateBar()
@@ -623,44 +589,56 @@ function Addon:InitializeBar()
         Addon:SavePosition()
     end)
 
-    bar:SetBackdrop({
+    local backdrop = {
         bgFile = "Interface/Buttons/WHITE8X8",
-        edgeFile = "Interface/Tooltips/UI-Tooltip-Border",
-        edgeSize = 10,
-        insets = { left = 2, right = 2, top = 2, bottom = 2 },
-    })
-    bar:SetBackdropColor(0.02, 0.04, 0.02, 0.72)
-    bar:SetBackdropBorderColor(0.2, 0.35, 0.2, 0.95)
+        edgeFile = "Interface/Buttons/WHITE8X8",
+        edgeSize = 1,
+        insets = { left = 1, right = 1, top = 1, bottom = 1 },
+    }
 
-    bar.background = bar:CreateTexture(nil, "BACKGROUND")
-    bar.background:SetColorTexture(0.03, 0.03, 0.03, 0.75)
+    bar.bars = CreateFrame("Frame", nil, bar, "BackdropTemplate")
+    bar.bars:SetBackdrop(backdrop)
+    bar.bars:SetBackdropColor(0, 0, 0, 0.6)
+    bar.bars:SetBackdropBorderColor(0, 0, 0, 1)
+
+    bar.barscontainer = CreateFrame("Frame", nil, bar.bars)
+    bar.background = bar.barscontainer:CreateTexture(nil, "BACKGROUND")
+    bar.background:SetAllPoints(bar.barscontainer)
+    bar.background:SetTexture("Interface\\Buttons\\WHITE8X8")
+    bar.background:SetVertexColor(0, 0, 0, 0.2)
+
+    bar.counter = CreateFrame("Frame", nil, bar, "BackdropTemplate")
+    bar.counter:SetBackdrop(backdrop)
+    bar.counter:SetBackdropColor(0, 0, 0, 0.6)
+    bar.counter:SetBackdropBorderColor(0, 0, 0, 1)
 
     bar.segments = {}
     for index = 1, 3 do
-        local segment = bar:CreateTexture(nil, "ARTWORK")
+        local segment = bar.barscontainer:CreateTexture(nil, "ARTWORK")
         local r, g, b, a = GetSegmentColorLegacy(index)
-        segment:SetColorTexture(r, g, b, a)
+        segment:SetTexture("Interface\\Buttons\\WHITE8X8")
+        segment:SetVertexColor(r, g, b, a)
 
-        local label = bar:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+        local label = bar.barscontainer:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
         label:SetTextColor(1, 1, 1)
+        label:SetShadowOffset(1, -1)
+        label:SetShadowColor(0, 0, 0, 1)
+
+        local stackLabel = bar.barscontainer:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+        stackLabel:SetTextColor(0.85, 0.85, 0.85)
+        stackLabel:SetShadowOffset(1, -1)
+        stackLabel:SetShadowColor(0, 0, 0, 1)
 
         segment.label = label
+        segment.stackLabel = stackLabel
         bar.segments[index] = segment
     end
 
-    bar.countText = bar:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
-    bar.countText:SetJustifyH("LEFT")
-    bar.countText:SetTextColor(0.92, 0.98, 0.92)
-
-    bar:SetScript("OnEnter", function(self)
-        GameTooltip:SetOwner(self, "ANCHOR_TOP")
-        GameTooltip:SetText("AbundanceTracker")
-        GameTooltip:AddLine(self.tooltipText or "Abundance: 0 active HoTs (0% cost reduction / crit).", 1, 1, 1, true)
-        GameTooltip:Show()
-    end)
-    bar:SetScript("OnLeave", function()
-        GameTooltip:Hide()
-    end)
+    bar.countText = bar.counter:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    bar.countText:SetJustifyH("CENTER")
+    bar.countText:SetTextColor(1, 1, 1)
+    bar.countText:SetShadowOffset(1, -1)
+    bar.countText:SetShadowColor(0, 0, 0, 1)
 
     self.bar = bar
     self.eventFrame = self.eventFrame or CreateFrame("Frame")

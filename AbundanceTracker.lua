@@ -7,10 +7,17 @@ local defaults = {
     x = 0,
     y = -170,
     scale = 1,
-    width = 240,
-    height = 22,
+    width = 200,
+    height = 15,
     showWhenInactive = true,
-    showCountText = true,
+    showCounter = true,
+    showTimers = true,
+    showStackLabels = false,
+    stackLabelOffset = 4,
+    counterFontSize = 12,
+    timerFontSize = 8,
+    stackLabelFontSize = 8,
+    showDecimalTimers = true,
     dangerThreshold = 5,
     warningThreshold = 9,
 }
@@ -128,20 +135,6 @@ SlashCmdList["ABUNDANCETRACKER"] = function(msg)
 
     if msg == "reset" then
         Addon:ResetPosition()
-        return
-    end
-
-    if msg == "debug" then
-        if Addon.DebugAuraScan then
-            Addon:DebugAuraScan()
-        end
-        return
-    end
-
-    if msg == "buffs" then
-        if Addon.DebugPlayerBuffs then
-            Addon:DebugPlayerBuffs()
-        end
         return
     end
 

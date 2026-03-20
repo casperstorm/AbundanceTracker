@@ -78,7 +78,7 @@ end
 
 local function CreateConfigFrame()
     local frame = CreateFrame("Frame", "AbundanceTrackerConfigFrame", UIParent, "BasicFrameTemplateWithInset")
-    frame:SetSize(400, 380)
+    frame:SetSize(400, 700)
     frame:SetPoint("CENTER")
     frame:SetMovable(true)
     frame:EnableMouse(true)
@@ -111,10 +111,41 @@ local function CreateConfigFrame()
 
     y = y - 40
 
-    local showCountCheckbox = CreateCheckbox(content, "Show stack count beside bar", "showCountText")
-    showCountCheckbox:SetPoint("TOPLEFT", content, "TOPLEFT", 0, y)
+    local showCounterCheckbox = CreateCheckbox(content, "Show stack counter", "showCounter")
+    showCounterCheckbox:SetPoint("TOPLEFT", content, "TOPLEFT", 0, y)
 
     y = y - 40
+
+    local showTimersCheckbox = CreateCheckbox(content, "Show timer labels", "showTimers")
+    showTimersCheckbox:SetPoint("TOPLEFT", content, "TOPLEFT", 0, y)
+
+    y = y - 40
+
+    local showStackLabelsCheckbox = CreateCheckbox(content, "Show stack labels", "showStackLabels")
+    showStackLabelsCheckbox:SetPoint("TOPLEFT", content, "TOPLEFT", 0, y)
+
+    y = y - 40
+
+    local showDecimalTimersCheckbox = CreateCheckbox(content, "Show decimal timers", "showDecimalTimers")
+    showDecimalTimersCheckbox:SetPoint("TOPLEFT", content, "TOPLEFT", 0, y)
+
+    y = y - 40
+
+    CreateSlider(content, "Stack label Y offset", "stackLabelOffset", 0, 12, 1, y)
+
+    y = y - 38
+
+    CreateSlider(content, "Counter font size", "counterFontSize", 8, 24, 1, y)
+
+    y = y - 38
+
+    CreateSlider(content, "Timer font size", "timerFontSize", 6, 24, 1, y)
+
+    y = y - 38
+
+    CreateSlider(content, "Stack font size", "stackLabelFontSize", 6, 24, 1, y)
+
+    y = y - 38
 
     CreateSlider(content, "Red below", "dangerThreshold", 1, 12, 1, y)
 
@@ -132,11 +163,11 @@ local function CreateConfigFrame()
 
     y = y - 38
 
-    CreateSlider(content, "Width", "width", 180, 360, 5, y)
+    CreateSlider(content, "Width", "width", 120, 360, 5, y)
 
     y = y - 38
 
-    CreateSlider(content, "Height", "height", 16, 40, 1, y)
+    CreateSlider(content, "Height", "height", 10, 40, 1, y)
 
     y = y - 42
 
