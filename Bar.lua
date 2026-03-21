@@ -410,6 +410,7 @@ function Addon:ApplyLayout()
         self.bar.counter:Hide()
     end
 
+    self.bar.barscontainer:ClearAllPoints()
     self.bar.barscontainer:SetPoint("TOPLEFT", self.bar.bars, "TOPLEFT", 1, -1)
     self.bar.barscontainer:SetPoint("BOTTOMRIGHT", self.bar.bars, "BOTTOMRIGHT", -1, 1)
 
@@ -422,6 +423,20 @@ function Addon:ApplyLayout()
         segment.label:SetFont(STANDARD_TEXT_FONT, timerFontSize, "")
         segment.stackLabel:SetFont(STANDARD_TEXT_FONT, stackLabelFontSize, "")
     end
+end
+
+local function GetBarsContainerWidth(bar)
+    if not bar then
+        return 1
+    end
+
+    local configuredWidth = Addon:GetSetting("width") or bar:GetWidth() or 240
+    local configuredHeight = Addon:GetSetting("height") or bar:GetHeight() or 22
+    local showCounter = Addon:GetSetting("showCounter") ~= false
+    local counterWidth = showCounter and configuredHeight or 0
+    local barsWidth = configuredWidth - (counterWidth > 0 and (counterWidth - 1) or 0)
+
+    return math.max(barsWidth - 2, 1)
 end
 
 function Addon:UpdateTimelineVisuals()
@@ -453,7 +468,7 @@ function Addon:UpdateTimelineVisuals()
         self.bar.countText:Hide()
     end
 
-    local barWidth = math.max(self.bar.barscontainer:GetWidth(), 1)
+    local barWidth = GetBarsContainerWidth(self.bar)
     local totalDuration = math.max(timeline.totalDuration, 0.001)
     local frameWidthUnit = barWidth / totalDuration
     local minInsideWidth = 24
