@@ -52,47 +52,44 @@ local function GetTrackedUnits()
     return trackedUnits
 end
 
-local function ScanUnitByName(unit, expirations, maxDurationRef)
-    if not UnitAura then
-        return 0
-    end
-
-    local now = GetTime()
-    local added = 0
-
-    for _, spellName in pairs(TRACKED_HOT_SPELL_NAMES) do
-        local name, _, _, _, _, duration, expirationTime = UnitAura(unit, spellName, nil, "HELPFUL|PLAYER")
-        if name and (expirationTime or 0) > now then
-            expirations[#expirations + 1] = expirationTime
-            maxDurationRef.value = math.max(maxDurationRef.value or 0, duration or 0)
-            added = added + 1
-        end
-    end
-
-    return added
-end
-
-local function CollectUnitAuraExpirationsModern(unit, expirations, maxDurationRef)
-    if not (C_UnitAuras and C_UnitAuras.GetAuraDataBySpellName) then
+local function AddTrackedExpiration(expirations, seenAuras, spellKey, expirationTime, duration, maxDurationRef)
+    if not expirationTime or expirationTime <= GetTime() then
         return false
     end
 
-    local now = GetTime()
-    local added = false
+    local dedupeKey = tostring(spellKey) .. ":" .. tostring(math.floor((expirationTime * 100) + 0.5))
+    if seenAuras[dedupeKey] then
+        return false
+    end
 
-    for _, spellName in pairs(TRACKED_HOT_SPELL_NAMES) do
-        local aura = C_UnitAuras.GetAuraDataBySpellName(unit, spellName, "HELPFUL|PLAYER")
-        if aura then
-            local expirationTime = aura.expirationTime or 0
-            if expirationTime > now then
-                expirations[#expirations + 1] = expirationTime
-                maxDurationRef.value = math.max(maxDurationRef.value or 0, aura.duration or 0)
-                added = true
+    seenAuras[dedupeKey] = true
+    expirations[#expirations + 1] = expirationTime
+    maxDurationRef.value = math.max(maxDurationRef.value or 0, duration or 0)
+    return true
+end
+
+local function CollectUnitAuraExpirationsModern(unit, expirations, maxDurationRef, seenAuras)
+    if not C_UnitAuras then
+        return
+    end
+
+    if C_UnitAuras.GetAuraDataBySpellName then
+        for spellId, spellName in pairs(TRACKED_HOT_SPELL_NAMES) do
+            local aura = C_UnitAuras.GetAuraDataBySpellName(unit, spellName, "HELPFUL|PLAYER")
+            if aura then
+                AddTrackedExpiration(expirations, seenAuras, spellId, aura.expirationTime, aura.duration, maxDurationRef)
             end
         end
     end
 
-    return added
+    if C_UnitAuras.GetAuraDataBySpellID then
+        for spellId in pairs(TRACKED_HOT_SPELL_IDS) do
+            local aura = C_UnitAuras.GetAuraDataBySpellID(unit, spellId, "HELPFUL|PLAYER")
+            if aura then
+                AddTrackedExpiration(expirations, seenAuras, spellId, aura.expirationTime, aura.duration, maxDurationRef)
+            end
+        end
+    end
 end
 
 local function CollectUnitAuraExpirations(unit, expirations, maxDurationRef)
@@ -100,29 +97,24 @@ local function CollectUnitAuraExpirations(unit, expirations, maxDurationRef)
         return
     end
 
-    local now = GetTime()
-    local beforeCount = #expirations
+    local seenAuras = {}
 
-    if CollectUnitAuraExpirationsModern(unit, expirations, maxDurationRef) then
-        return
-    end
+    CollectUnitAuraExpirationsModern(unit, expirations, maxDurationRef, seenAuras)
 
-    if ScanUnitByName(unit, expirations, maxDurationRef) > 0 then
-        return
-    end
-
-    if UnitBuff then
-        for _, spellName in pairs(TRACKED_HOT_SPELL_NAMES) do
-            local name, _, _, _, _, duration, expirationTime = UnitBuff(unit, spellName, nil, "PLAYER")
-            if name and (expirationTime or 0) > now then
-                expirations[#expirations + 1] = expirationTime
-                maxDurationRef.value = math.max(maxDurationRef.value or 0, duration or 0)
-            end
+    for spellId, spellName in pairs(TRACKED_HOT_SPELL_NAMES) do
+        local name, _, _, _, _, duration, expirationTime = UnitAura and UnitAura(unit, spellName, nil, "HELPFUL|PLAYER")
+        if name then
+            AddTrackedExpiration(expirations, seenAuras, spellId, expirationTime, duration, maxDurationRef)
         end
     end
 
-    if #expirations > beforeCount then
-        return
+    if UnitBuff then
+        for spellId, spellName in pairs(TRACKED_HOT_SPELL_NAMES) do
+            local name, _, _, _, _, duration, expirationTime = UnitBuff(unit, spellName, nil, "PLAYER")
+            if name then
+                AddTrackedExpiration(expirations, seenAuras, spellId, expirationTime, duration, maxDurationRef)
+            end
+        end
     end
 
     if UnitBuff then
@@ -133,15 +125,10 @@ local function CollectUnitAuraExpirations(unit, expirations, maxDurationRef)
             end
 
             local isTrackedSpell = (spellId and TRACKED_HOT_SPELL_IDS[spellId]) or (name and TRACKED_HOT_NAMES[name])
-            if isTrackedSpell and (expirationTime or 0) > now then
-                expirations[#expirations + 1] = expirationTime
-                maxDurationRef.value = math.max(maxDurationRef.value or 0, duration or 0)
+            if isTrackedSpell then
+                AddTrackedExpiration(expirations, seenAuras, spellId or name, expirationTime, duration, maxDurationRef)
             end
         end
-    end
-
-    if #expirations > beforeCount then
-        return
     end
 
     if UnitBuff then
@@ -152,15 +139,10 @@ local function CollectUnitAuraExpirations(unit, expirations, maxDurationRef)
             end
 
             local isTrackedSpell = (spellId and TRACKED_HOT_SPELL_IDS[spellId]) or (name and TRACKED_HOT_NAMES[name])
-            if isTrackedSpell and sourceUnit and UnitIsUnit(sourceUnit, "player") and (expirationTime or 0) > now then
-                expirations[#expirations + 1] = expirationTime
-                maxDurationRef.value = math.max(maxDurationRef.value or 0, duration or 0)
+            if isTrackedSpell and sourceUnit and UnitIsUnit(sourceUnit, "player") then
+                AddTrackedExpiration(expirations, seenAuras, spellId or name, expirationTime, duration, maxDurationRef)
             end
         end
-    end
-
-    if #expirations > beforeCount then
-        return
     end
 
     if UnitAura then
@@ -172,10 +154,7 @@ local function CollectUnitAuraExpirations(unit, expirations, maxDurationRef)
 
             local isTrackedSpell = (spellId and TRACKED_HOT_SPELL_IDS[spellId]) or (name and TRACKED_HOT_NAMES[name])
             if isTrackedSpell and sourceUnit and UnitIsUnit(sourceUnit, "player") then
-                if (expirationTime or 0) > now then
-                    expirations[#expirations + 1] = expirationTime
-                    maxDurationRef.value = math.max(maxDurationRef.value or 0, 0)
-                end
+                AddTrackedExpiration(expirations, seenAuras, spellId or name, expirationTime, 0, maxDurationRef)
             end
         end
     end

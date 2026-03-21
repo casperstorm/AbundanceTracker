@@ -53,29 +53,46 @@ function Addon:SetSetting(key, value)
     if Addon.UpdateBar then
         Addon:UpdateBar()
     end
+
 end
 
-function Addon:SavePosition()
-    if not self.bar then
+local function SaveFramePosition(frame, prefix)
+    if not frame or not AbundanceTrackerDB then
         return
     end
 
-    local point, _, relativePoint, x, y = self.bar:GetPoint(1)
-    AbundanceTrackerDB.point = point or defaults.point
-    AbundanceTrackerDB.relativePoint = relativePoint or defaults.relativePoint
-    AbundanceTrackerDB.x = x or defaults.x
-    AbundanceTrackerDB.y = y or defaults.y
+    local pointKey = prefix == "" and "point" or (prefix .. "Point")
+    local relativePointKey = prefix == "" and "relativePoint" or (prefix .. "RelativePoint")
+    local xKey = prefix == "" and "x" or (prefix .. "X")
+    local yKey = prefix == "" and "y" or (prefix .. "Y")
+    local point, _, relativePoint, x, y = frame:GetPoint(1)
+    AbundanceTrackerDB[pointKey] = point or defaults[pointKey]
+    AbundanceTrackerDB[relativePointKey] = relativePoint or defaults[relativePointKey]
+    AbundanceTrackerDB[xKey] = x or defaults[xKey]
+    AbundanceTrackerDB[yKey] = y or defaults[yKey]
 end
 
-function Addon:ResetPosition()
+local function ResetFramePosition(prefix)
     if not AbundanceTrackerDB then
         return
     end
 
-    AbundanceTrackerDB.point = defaults.point
-    AbundanceTrackerDB.relativePoint = defaults.relativePoint
-    AbundanceTrackerDB.x = defaults.x
-    AbundanceTrackerDB.y = defaults.y
+    local pointKey = prefix == "" and "point" or (prefix .. "Point")
+    local relativePointKey = prefix == "" and "relativePoint" or (prefix .. "RelativePoint")
+    local xKey = prefix == "" and "x" or (prefix .. "X")
+    local yKey = prefix == "" and "y" or (prefix .. "Y")
+    AbundanceTrackerDB[pointKey] = defaults[pointKey]
+    AbundanceTrackerDB[relativePointKey] = defaults[relativePointKey]
+    AbundanceTrackerDB[xKey] = defaults[xKey]
+    AbundanceTrackerDB[yKey] = defaults[yKey]
+end
+
+function Addon:SavePosition()
+    SaveFramePosition(self.bar, "")
+end
+
+function Addon:ResetPosition()
+    ResetFramePosition("")
 
     if self.ApplyLayout then
         self:ApplyLayout()
