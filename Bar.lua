@@ -7,23 +7,12 @@ local TRACKED_HOT_SPELL_IDS = {
     [774] = true,
     [155777] = true,
 }
+local HELPFUL_FILTER = "HELPFUL"
+local MAX_UNIT_AURAS = 40
 local MAX_STACKS = 12
 
-local TRACKED_HOT_NAMES = {}
-local TRACKED_HOT_SPELL_NAMES = {}
-local TRACKED_HOT_NAME_TO_ID = {}
-local GetPlayerAuraBySpellID = C_UnitAuras and C_UnitAuras.GetPlayerAuraBySpellID
-local GetUnitAuraBySpellID = C_UnitAuras and C_UnitAuras.GetUnitAuraBySpellID
 local ABUNDANCE_SPELL_NAME = C_Spell and C_Spell.GetSpellName and C_Spell.GetSpellName(ABUNDANCE_SPELL_ID) or GetSpellInfo(ABUNDANCE_SPELL_ID)
 local GetThresholdConfig
-for spellId in pairs(TRACKED_HOT_SPELL_IDS) do
-    local spellName = C_Spell and C_Spell.GetSpellName and C_Spell.GetSpellName(spellId) or GetSpellInfo(spellId)
-    if spellName then
-        TRACKED_HOT_NAMES[spellName] = true
-        TRACKED_HOT_SPELL_NAMES[spellId] = spellName
-        TRACKED_HOT_NAME_TO_ID[spellName] = spellId
-    end
-end
 
 local function HasAbundanceTalent()
     if IsSpellKnownOrOverridesKnown and IsSpellKnownOrOverridesKnown(ABUNDANCE_SPELL_ID) then
@@ -74,201 +63,63 @@ local function AddTrackedExpiration(expirations, seenAuras, spellKey, expiration
     return true
 end
 
-local function NormalizeTrackedSpellKey(spellId, spellName)
+local function GetTrackedSpellId(auraData)
+    if not auraData then
+        return nil
+    end
+
+    local spellId = rawget(auraData, "spellId")
+    if spellId and issecretvalue and issecretvalue(spellId) then
+        spellId = nil
+    end
+
     if spellId and TRACKED_HOT_SPELL_IDS[spellId] then
         return spellId
     end
 
-    if spellName and TRACKED_HOT_NAME_TO_ID[spellName] then
-        return TRACKED_HOT_NAME_TO_ID[spellName]
-    end
-
-    return spellId or spellName
+    return nil
 end
 
-local function AddTrackedExpirationForUnit(expirations, seenAuras, foundSpellKeys, unitCache, spellId, spellName, expirationTime, duration, maxDurationRef)
-    local spellKey = NormalizeTrackedSpellKey(spellId, spellName)
-    if not spellKey then
-        return false
-    end
-
-    local added = AddTrackedExpiration(expirations, seenAuras, spellKey, expirationTime, duration, maxDurationRef)
-    if added then
-        foundSpellKeys[spellKey] = true
-        if unitCache then
-            unitCache[spellKey] = {
-                expirationTime = expirationTime,
-                duration = duration,
-            }
-        end
-    end
-
-    return added
-end
-
-local function IsUnitAuraDataReliable(unit)
-    if UnitIsUnit(unit, "player") then
-        return true
-    end
-
-    if UnitPhaseReason and UnitPhaseReason(unit) then
-        return false
-    end
-
-    if UnitIsConnected and not UnitIsConnected(unit) then
-        return false
-    end
-
-    if UnitIsVisible and not UnitIsVisible(unit) then
-        return false
-    end
-
-    return true
-end
-
-local function CollectCachedAuraExpirations(expirations, seenAuras, foundSpellKeys, unitCache, maxDurationRef)
-    if not unitCache then
-        return
-    end
-
-    local now = GetTime()
-    for spellId in pairs(TRACKED_HOT_SPELL_IDS) do
-        local cachedAura = unitCache[spellId]
-        if cachedAura and cachedAura.expirationTime and cachedAura.expirationTime > now then
-            AddTrackedExpiration(expirations, seenAuras, spellId, cachedAura.expirationTime, cachedAura.duration, maxDurationRef)
-            foundSpellKeys[spellId] = true
-        else
-            unitCache[spellId] = nil
-        end
-    end
-end
-
-local UnitAuraMatchState = {
-    spellId = nil,
-    foundAura = nil,
-}
-
-local function IsTrackedAuraMatch(auraData, spellId)
-    if not auraData then
-        return false
-    end
-
-    local auraSpellId = auraData.spellId
-    if auraSpellId and issecretvalue and issecretvalue(auraSpellId) then
-        auraSpellId = nil
-    end
-
-    if auraSpellId ~= spellId then
+local function IsPlayerTrackedAura(auraData)
+    local spellId = GetTrackedSpellId(auraData)
+    if not spellId then
         return false
     end
 
     local isFromPlayer = rawget(auraData, "isFromPlayerOrPlayerPet")
     if isFromPlayer ~= nil then
-        return isFromPlayer == true
+        return isFromPlayer == true, spellId
     end
 
     local sourceUnit = rawget(auraData, "sourceUnit")
     if sourceUnit then
-        return UnitIsUnit(sourceUnit, "player")
+        return UnitIsUnit(sourceUnit, "player"), spellId
     end
 
-    return true
+    return true, spellId
 end
 
-local function ForEachTrackedAuraCallback(auraData)
-    local state = UnitAuraMatchState
-    if IsTrackedAuraMatch(auraData, state.spellId) then
-        state.foundAura = auraData
-        return true
+local function AddTrackedAuraData(expirations, seenAuras, auraData, maxDurationRef)
+    local isTracked, spellId = IsPlayerTrackedAura(auraData)
+    if not isTracked then
+        return false
     end
+
+    local auraInstanceID = rawget(auraData, "auraInstanceID")
+    local dedupeKey = auraInstanceID or spellId
+    return AddTrackedExpiration(expirations, seenAuras, dedupeKey, auraData.expirationTime, auraData.duration, maxDurationRef)
 end
 
-local function GetTrackedAuraByIteration(unit, spellId)
-    UnitAuraMatchState.spellId = spellId
-    UnitAuraMatchState.foundAura = nil
+local AuraScanState = {
+    expirations = nil,
+    seenAuras = nil,
+    maxDurationRef = nil,
+}
 
-    if AuraUtil and AuraUtil.ForEachAura then
-        AuraUtil.ForEachAura(unit, "HELPFUL", nil, ForEachTrackedAuraCallback, true)
-        if UnitAuraMatchState.foundAura then
-            return UnitAuraMatchState.foundAura
-        end
-    end
-
-    if C_UnitAuras and C_UnitAuras.GetAuraDataByIndex then
-        for index = 1, 40 do
-            local auraData = C_UnitAuras.GetAuraDataByIndex(unit, index, "HELPFUL")
-            if not auraData then
-                break
-            end
-
-            if IsTrackedAuraMatch(auraData, spellId) then
-                return auraData
-            end
-        end
-    end
-
-    return nil
-end
-
-local function CacheTrackedAura(unitCache, spellId, auraData)
-    if not unitCache then
-        return
-    end
-
-    if auraData and auraData.expirationTime and auraData.expirationTime > GetTime() then
-        unitCache[spellId] = {
-            expirationTime = auraData.expirationTime,
-            duration = auraData.duration,
-        }
-        return
-    end
-
-    unitCache[spellId] = nil
-end
-
-local function GetTrackedAuraForUnit(unit, spellId, spellName, auraDataReliable, unitCache)
-    local aura = nil
-    local directLookupAPI = UnitIsUnit(unit, "player") and GetPlayerAuraBySpellID or GetUnitAuraBySpellID
-
-    if directLookupAPI then
-        if UnitIsUnit(unit, "player") then
-            aura = directLookupAPI(spellId)
-        else
-            aura = directLookupAPI(unit, spellId)
-        end
-
-        if aura and IsTrackedAuraMatch(aura, spellId) then
-            CacheTrackedAura(unitCache, spellId, aura)
-            return aura
-        end
-    end
-
-    if spellName and AuraUtil and AuraUtil.FindAuraByName then
-        local success, auraData = pcall(AuraUtil.FindAuraByName, spellName, unit, "HELPFUL")
-        if success and auraData and IsTrackedAuraMatch(auraData, spellId) then
-            CacheTrackedAura(unitCache, spellId, auraData)
-            return auraData
-        end
-    end
-
-    aura = GetTrackedAuraByIteration(unit, spellId)
-    if aura then
-        CacheTrackedAura(unitCache, spellId, aura)
-        return aura
-    end
-
-    if not auraDataReliable and unitCache then
-        local cachedAura = unitCache[spellId]
-        if cachedAura and cachedAura.expirationTime and cachedAura.expirationTime > GetTime() then
-            return cachedAura
-        end
-    end
-
-    if auraDataReliable then
-        CacheTrackedAura(unitCache, spellId, nil)
-    end
-
-    return nil
+local function ForEachTrackedHelpfulAura(auraData)
+    local state = AuraScanState
+    AddTrackedAuraData(state.expirations, state.seenAuras, auraData, state.maxDurationRef)
+    return false
 end
 
 local function CollectUnitAuraExpirations(unit, expirations, maxDurationRef)
@@ -277,30 +128,36 @@ local function CollectUnitAuraExpirations(unit, expirations, maxDurationRef)
     end
 
     local seenAuras = {}
-    local foundSpellKeys = {}
-    local auraDataReliable = IsUnitAuraDataReliable(unit)
-    local unitGuid = UnitGUID(unit)
-    Addon.auraCache = Addon.auraCache or {}
-    local unitCache = unitGuid and Addon.auraCache[unitGuid]
-    if not unitCache and unitGuid then
-        unitCache = {}
-        Addon.auraCache[unitGuid] = unitCache
-    end
 
-    for spellId, spellName in pairs(TRACKED_HOT_SPELL_NAMES) do
-        local auraData = GetTrackedAuraForUnit(unit, spellId, spellName, auraDataReliable, unitCache)
-        if auraData then
-            AddTrackedExpirationForUnit(expirations, seenAuras, foundSpellKeys, unitCache, spellId, spellName, auraData.expirationTime, auraData.duration, maxDurationRef)
+    if C_UnitAuras and C_UnitAuras.GetUnitAuras then
+        local helpfulAuras = C_UnitAuras.GetUnitAuras(unit, HELPFUL_FILTER, MAX_UNIT_AURAS)
+        if helpfulAuras then
+            for _, auraData in ipairs(helpfulAuras) do
+                AddTrackedAuraData(expirations, seenAuras, auraData, maxDurationRef)
+            end
+            return
         end
     end
 
-    if not auraDataReliable then
-        CollectCachedAuraExpirations(expirations, seenAuras, foundSpellKeys, unitCache, maxDurationRef)
-    else
-        for spellId in pairs(TRACKED_HOT_SPELL_IDS) do
-            if not foundSpellKeys[spellId] and unitCache then
-                unitCache[spellId] = nil
+    if AuraUtil and AuraUtil.ForEachAura then
+        AuraScanState.expirations = expirations
+        AuraScanState.seenAuras = seenAuras
+        AuraScanState.maxDurationRef = maxDurationRef
+        AuraUtil.ForEachAura(unit, HELPFUL_FILTER, nil, ForEachTrackedHelpfulAura, true)
+        AuraScanState.expirations = nil
+        AuraScanState.seenAuras = nil
+        AuraScanState.maxDurationRef = nil
+        return
+    end
+
+    if C_UnitAuras and C_UnitAuras.GetAuraDataByIndex then
+        for index = 1, MAX_UNIT_AURAS do
+            local auraData = C_UnitAuras.GetAuraDataByIndex(unit, index, HELPFUL_FILTER)
+            if not auraData then
+                break
             end
+
+            AddTrackedAuraData(expirations, seenAuras, auraData, maxDurationRef)
         end
     end
 end
@@ -440,16 +297,13 @@ function Addon:GetAbundanceCount()
         end
     end
 
-    local abundanceCount, abundanceExpiration, abundanceDuration = GetAbundanceBuffInfo()
+    local abundanceCount, abundanceExpiration = GetAbundanceBuffInfo()
 
-    self.scanCount = math.min(#expirations, MAX_STACKS)
     self.abundanceCount = math.min(abundanceCount or 0, MAX_STACKS)
     self.abundanceExpiration = abundanceExpiration or 0
-    self.abundanceDuration = abundanceDuration or 0
 
     self.maxDuration = maxDurationRef.value
     local timeline = GetTimelineData(expirations, self.maxDuration)
-    self.timelineCount = timeline.count
 
     if self.abundanceCount > 0 and self.abundanceExpiration > GetTime() then
         self.displayCount = self.abundanceCount
@@ -597,7 +451,6 @@ function Addon:UpdateTimelineVisuals()
 
     local timeline = GetTimelineData(self.expirations or {}, self.maxDuration or 0)
     local count = self.displayCount or timeline.count
-    local totalActive = timeline.totalActive or timeline.count
     local known = HasAbundanceTalent()
     local inCombatOnly = self:GetSetting("inCombatOnly") == true
     local shouldShow = count > 0 or (known and self:GetSetting("showWhenInactive"))
@@ -628,7 +481,6 @@ function Addon:UpdateTimelineVisuals()
     local showTimers = self:GetSetting("showTimers") ~= false
     local showStackLabels = self:GetSetting("showStackLabels") == true
     local stackLabelOffset = self:GetSetting("stackLabelOffset") or 4
-    local dominantColor = nil
 
     for index, data in ipairs(timeline.segments) do
         local segment = self.bar.segments[index]
@@ -643,7 +495,6 @@ function Addon:UpdateTimelineVisuals()
             segment:SetPoint("BOTTOMLEFT", self.bar.barscontainer, "BOTTOMLEFT", leftOffset, 0)
             segment:SetPoint("RIGHT", self.bar.barscontainer, "LEFT", rightOffset, 0)
             segment:Show()
-            dominantColor = dominantColor or { r, g, b }
 
             segment.label:SetText(FormatSeconds(data.endTime))
             segment.label:ClearAllPoints()
