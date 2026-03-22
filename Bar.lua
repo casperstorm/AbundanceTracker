@@ -1,5 +1,7 @@
 local _, Addon = ...
 
+local issecretvalue = issecretvalue
+
 local ABUNDANCE_SPELL_ID = 207383
 local TRACKED_HOT_SPELL_IDS = {
     [774] = true,
@@ -9,6 +11,9 @@ local MAX_STACKS = 12
 
 local TRACKED_HOT_NAMES = {}
 local TRACKED_HOT_SPELL_NAMES = {}
+local TRACKED_HOT_NAME_TO_ID = {}
+local GetPlayerAuraBySpellID = C_UnitAuras and C_UnitAuras.GetPlayerAuraBySpellID
+local GetUnitAuraBySpellID = C_UnitAuras and C_UnitAuras.GetUnitAuraBySpellID
 local ABUNDANCE_SPELL_NAME = C_Spell and C_Spell.GetSpellName and C_Spell.GetSpellName(ABUNDANCE_SPELL_ID) or GetSpellInfo(ABUNDANCE_SPELL_ID)
 local GetThresholdConfig
 for spellId in pairs(TRACKED_HOT_SPELL_IDS) do
@@ -16,6 +21,7 @@ for spellId in pairs(TRACKED_HOT_SPELL_IDS) do
     if spellName then
         TRACKED_HOT_NAMES[spellName] = true
         TRACKED_HOT_SPELL_NAMES[spellId] = spellName
+        TRACKED_HOT_NAME_TO_ID[spellName] = spellId
     end
 end
 
@@ -68,28 +74,201 @@ local function AddTrackedExpiration(expirations, seenAuras, spellKey, expiration
     return true
 end
 
-local function CollectUnitAuraExpirationsModern(unit, expirations, maxDurationRef, seenAuras)
-    if not C_UnitAuras then
+local function NormalizeTrackedSpellKey(spellId, spellName)
+    if spellId and TRACKED_HOT_SPELL_IDS[spellId] then
+        return spellId
+    end
+
+    if spellName and TRACKED_HOT_NAME_TO_ID[spellName] then
+        return TRACKED_HOT_NAME_TO_ID[spellName]
+    end
+
+    return spellId or spellName
+end
+
+local function AddTrackedExpirationForUnit(expirations, seenAuras, foundSpellKeys, unitCache, spellId, spellName, expirationTime, duration, maxDurationRef)
+    local spellKey = NormalizeTrackedSpellKey(spellId, spellName)
+    if not spellKey then
+        return false
+    end
+
+    local added = AddTrackedExpiration(expirations, seenAuras, spellKey, expirationTime, duration, maxDurationRef)
+    if added then
+        foundSpellKeys[spellKey] = true
+        if unitCache then
+            unitCache[spellKey] = {
+                expirationTime = expirationTime,
+                duration = duration,
+            }
+        end
+    end
+
+    return added
+end
+
+local function IsUnitAuraDataReliable(unit)
+    if UnitIsUnit(unit, "player") then
+        return true
+    end
+
+    if UnitPhaseReason and UnitPhaseReason(unit) then
+        return false
+    end
+
+    if UnitIsConnected and not UnitIsConnected(unit) then
+        return false
+    end
+
+    if UnitIsVisible and not UnitIsVisible(unit) then
+        return false
+    end
+
+    return true
+end
+
+local function CollectCachedAuraExpirations(expirations, seenAuras, foundSpellKeys, unitCache, maxDurationRef)
+    if not unitCache then
         return
     end
 
-    if C_UnitAuras.GetAuraDataBySpellName then
-        for spellId, spellName in pairs(TRACKED_HOT_SPELL_NAMES) do
-            local aura = C_UnitAuras.GetAuraDataBySpellName(unit, spellName, "HELPFUL|PLAYER")
-            if aura then
-                AddTrackedExpiration(expirations, seenAuras, spellId, aura.expirationTime, aura.duration, maxDurationRef)
+    local now = GetTime()
+    for spellId in pairs(TRACKED_HOT_SPELL_IDS) do
+        local cachedAura = unitCache[spellId]
+        if cachedAura and cachedAura.expirationTime and cachedAura.expirationTime > now then
+            AddTrackedExpiration(expirations, seenAuras, spellId, cachedAura.expirationTime, cachedAura.duration, maxDurationRef)
+            foundSpellKeys[spellId] = true
+        else
+            unitCache[spellId] = nil
+        end
+    end
+end
+
+local UnitAuraMatchState = {
+    spellId = nil,
+    foundAura = nil,
+}
+
+local function IsTrackedAuraMatch(auraData, spellId)
+    if not auraData then
+        return false
+    end
+
+    local auraSpellId = auraData.spellId
+    if auraSpellId and issecretvalue and issecretvalue(auraSpellId) then
+        auraSpellId = nil
+    end
+
+    if auraSpellId ~= spellId then
+        return false
+    end
+
+    local isFromPlayer = rawget(auraData, "isFromPlayerOrPlayerPet")
+    if isFromPlayer ~= nil then
+        return isFromPlayer == true
+    end
+
+    local sourceUnit = rawget(auraData, "sourceUnit")
+    if sourceUnit then
+        return UnitIsUnit(sourceUnit, "player")
+    end
+
+    return true
+end
+
+local function ForEachTrackedAuraCallback(auraData)
+    local state = UnitAuraMatchState
+    if IsTrackedAuraMatch(auraData, state.spellId) then
+        state.foundAura = auraData
+        return true
+    end
+end
+
+local function GetTrackedAuraByIteration(unit, spellId)
+    UnitAuraMatchState.spellId = spellId
+    UnitAuraMatchState.foundAura = nil
+
+    if AuraUtil and AuraUtil.ForEachAura then
+        AuraUtil.ForEachAura(unit, "HELPFUL", nil, ForEachTrackedAuraCallback, true)
+        if UnitAuraMatchState.foundAura then
+            return UnitAuraMatchState.foundAura
+        end
+    end
+
+    if C_UnitAuras and C_UnitAuras.GetAuraDataByIndex then
+        for index = 1, 40 do
+            local auraData = C_UnitAuras.GetAuraDataByIndex(unit, index, "HELPFUL")
+            if not auraData then
+                break
+            end
+
+            if IsTrackedAuraMatch(auraData, spellId) then
+                return auraData
             end
         end
     end
 
-    if C_UnitAuras.GetAuraDataBySpellID then
-        for spellId in pairs(TRACKED_HOT_SPELL_IDS) do
-            local aura = C_UnitAuras.GetAuraDataBySpellID(unit, spellId, "HELPFUL|PLAYER")
-            if aura then
-                AddTrackedExpiration(expirations, seenAuras, spellId, aura.expirationTime, aura.duration, maxDurationRef)
-            end
+    return nil
+end
+
+local function CacheTrackedAura(unitCache, spellId, auraData)
+    if not unitCache then
+        return
+    end
+
+    if auraData and auraData.expirationTime and auraData.expirationTime > GetTime() then
+        unitCache[spellId] = {
+            expirationTime = auraData.expirationTime,
+            duration = auraData.duration,
+        }
+        return
+    end
+
+    unitCache[spellId] = nil
+end
+
+local function GetTrackedAuraForUnit(unit, spellId, spellName, auraDataReliable, unitCache)
+    local aura = nil
+    local directLookupAPI = UnitIsUnit(unit, "player") and GetPlayerAuraBySpellID or GetUnitAuraBySpellID
+
+    if directLookupAPI then
+        if UnitIsUnit(unit, "player") then
+            aura = directLookupAPI(spellId)
+        else
+            aura = directLookupAPI(unit, spellId)
+        end
+
+        if aura and IsTrackedAuraMatch(aura, spellId) then
+            CacheTrackedAura(unitCache, spellId, aura)
+            return aura
         end
     end
+
+    if spellName and AuraUtil and AuraUtil.FindAuraByName then
+        local success, auraData = pcall(AuraUtil.FindAuraByName, spellName, unit, "HELPFUL")
+        if success and auraData and IsTrackedAuraMatch(auraData, spellId) then
+            CacheTrackedAura(unitCache, spellId, auraData)
+            return auraData
+        end
+    end
+
+    aura = GetTrackedAuraByIteration(unit, spellId)
+    if aura then
+        CacheTrackedAura(unitCache, spellId, aura)
+        return aura
+    end
+
+    if not auraDataReliable and unitCache then
+        local cachedAura = unitCache[spellId]
+        if cachedAura and cachedAura.expirationTime and cachedAura.expirationTime > GetTime() then
+            return cachedAura
+        end
+    end
+
+    if auraDataReliable then
+        CacheTrackedAura(unitCache, spellId, nil)
+    end
+
+    return nil
 end
 
 local function CollectUnitAuraExpirations(unit, expirations, maxDurationRef)
@@ -98,63 +277,29 @@ local function CollectUnitAuraExpirations(unit, expirations, maxDurationRef)
     end
 
     local seenAuras = {}
-
-    CollectUnitAuraExpirationsModern(unit, expirations, maxDurationRef, seenAuras)
+    local foundSpellKeys = {}
+    local auraDataReliable = IsUnitAuraDataReliable(unit)
+    local unitGuid = UnitGUID(unit)
+    Addon.auraCache = Addon.auraCache or {}
+    local unitCache = unitGuid and Addon.auraCache[unitGuid]
+    if not unitCache and unitGuid then
+        unitCache = {}
+        Addon.auraCache[unitGuid] = unitCache
+    end
 
     for spellId, spellName in pairs(TRACKED_HOT_SPELL_NAMES) do
-        local name, _, _, _, _, duration, expirationTime = UnitAura and UnitAura(unit, spellName, nil, "HELPFUL|PLAYER")
-        if name then
-            AddTrackedExpiration(expirations, seenAuras, spellId, expirationTime, duration, maxDurationRef)
+        local auraData = GetTrackedAuraForUnit(unit, spellId, spellName, auraDataReliable, unitCache)
+        if auraData then
+            AddTrackedExpirationForUnit(expirations, seenAuras, foundSpellKeys, unitCache, spellId, spellName, auraData.expirationTime, auraData.duration, maxDurationRef)
         end
     end
 
-    if UnitBuff then
-        for spellId, spellName in pairs(TRACKED_HOT_SPELL_NAMES) do
-            local name, _, _, _, _, duration, expirationTime = UnitBuff(unit, spellName, nil, "PLAYER")
-            if name then
-                AddTrackedExpiration(expirations, seenAuras, spellId, expirationTime, duration, maxDurationRef)
-            end
-        end
-    end
-
-    if UnitBuff then
-        for index = 1, 255 do
-            local name, _, _, _, _, duration, expirationTime, sourceUnit, _, _, spellId = UnitBuff(unit, index, "PLAYER")
-            if not name then
-                break
-            end
-
-            local isTrackedSpell = (spellId and TRACKED_HOT_SPELL_IDS[spellId]) or (name and TRACKED_HOT_NAMES[name])
-            if isTrackedSpell then
-                AddTrackedExpiration(expirations, seenAuras, spellId or name, expirationTime, duration, maxDurationRef)
-            end
-        end
-    end
-
-    if UnitBuff then
-        for index = 1, 255 do
-            local name, _, _, _, _, duration, expirationTime, sourceUnit, _, _, spellId = UnitBuff(unit, index)
-            if not name then
-                break
-            end
-
-            local isTrackedSpell = (spellId and TRACKED_HOT_SPELL_IDS[spellId]) or (name and TRACKED_HOT_NAMES[name])
-            if isTrackedSpell and sourceUnit and UnitIsUnit(sourceUnit, "player") then
-                AddTrackedExpiration(expirations, seenAuras, spellId or name, expirationTime, duration, maxDurationRef)
-            end
-        end
-    end
-
-    if UnitAura then
-        for index = 1, 255 do
-            local name, _, _, _, _, expirationTime, sourceUnit, _, _, spellId = UnitAura(unit, index, "HELPFUL")
-            if not name then
-                break
-            end
-
-            local isTrackedSpell = (spellId and TRACKED_HOT_SPELL_IDS[spellId]) or (name and TRACKED_HOT_NAMES[name])
-            if isTrackedSpell and sourceUnit and UnitIsUnit(sourceUnit, "player") then
-                AddTrackedExpiration(expirations, seenAuras, spellId or name, expirationTime, 0, maxDurationRef)
+    if not auraDataReliable then
+        CollectCachedAuraExpirations(expirations, seenAuras, foundSpellKeys, unitCache, maxDurationRef)
+    else
+        for spellId in pairs(TRACKED_HOT_SPELL_IDS) do
+            if not foundSpellKeys[spellId] and unitCache then
+                unitCache[spellId] = nil
             end
         end
     end
@@ -297,16 +442,22 @@ function Addon:GetAbundanceCount()
 
     local abundanceCount, abundanceExpiration, abundanceDuration = GetAbundanceBuffInfo()
 
-    if #expirations == 0 and abundanceCount > 0 and abundanceExpiration > GetTime() then
-        for index = 1, math.min(abundanceCount, MAX_STACKS) do
-            expirations[#expirations + 1] = abundanceExpiration
-        end
-        maxDurationRef.value = math.max(maxDurationRef.value or 0, abundanceDuration or 0, abundanceExpiration - GetTime())
-    end
+    self.scanCount = math.min(#expirations, MAX_STACKS)
+    self.abundanceCount = math.min(abundanceCount or 0, MAX_STACKS)
+    self.abundanceExpiration = abundanceExpiration or 0
+    self.abundanceDuration = abundanceDuration or 0
 
     self.maxDuration = maxDurationRef.value
     local timeline = GetTimelineData(expirations, self.maxDuration)
-    return timeline.count
+    self.timelineCount = timeline.count
+
+    if self.abundanceCount > 0 and self.abundanceExpiration > GetTime() then
+        self.displayCount = self.abundanceCount
+    else
+        self.displayCount = timeline.count
+    end
+
+    return self.displayCount
 end
 
 local function GetSegmentColor(count)
@@ -445,8 +596,8 @@ function Addon:UpdateTimelineVisuals()
     end
 
     local timeline = GetTimelineData(self.expirations or {}, self.maxDuration or 0)
-    local count = timeline.count
-    local totalActive = timeline.totalActive or count
+    local count = self.displayCount or timeline.count
+    local totalActive = timeline.totalActive or timeline.count
     local known = HasAbundanceTalent()
     local inCombatOnly = self:GetSetting("inCombatOnly") == true
     local shouldShow = count > 0 or (known and self:GetSetting("showWhenInactive"))
@@ -461,7 +612,7 @@ function Addon:UpdateTimelineVisuals()
     end
 
     self.bar:Show()
-    self.bar.countText:SetText(tostring(totalActive))
+    self.bar.countText:SetText(tostring(count))
     if self:GetSetting("showCounter") ~= false then
         self.bar.countText:Show()
     else
@@ -554,11 +705,8 @@ function Addon:UpdateTimelineVisuals()
         self.bar.segments[index].stackLabel:Hide()
     end
 
-    if dominantColor then
-        self.bar.countText:SetTextColor(dominantColor[1], dominantColor[2], dominantColor[3], 1)
-    else
-        self.bar.countText:SetTextColor(1, 1, 1, 1)
-    end
+    local countR, countG, countB = GetSegmentColor(count)
+    self.bar.countText:SetTextColor(countR, countG, countB, 1)
 
 end
 
@@ -655,8 +803,14 @@ function Addon:InitializeBar()
     self.eventFrame:RegisterEvent("PLAYER_REGEN_DISABLED")
     self.eventFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
     self.eventFrame:RegisterEvent("UNIT_AURA")
+    self.eventFrame:RegisterEvent("UNIT_PHASE")
+    self.eventFrame:RegisterEvent("UNIT_CONNECTION")
     self.eventFrame:SetScript("OnEvent", function(_, event, unit)
-        if event ~= "UNIT_AURA" or not unit or UnitInParty(unit) or UnitInRaid(unit) or UnitIsUnit(unit, "player") then
+        if (event ~= "UNIT_AURA" and event ~= "UNIT_PHASE" and event ~= "UNIT_CONNECTION")
+            or not unit
+            or UnitInParty(unit)
+            or UnitInRaid(unit)
+            or UnitIsUnit(unit, "player") then
             Addon:UpdateBar()
         end
     end)
