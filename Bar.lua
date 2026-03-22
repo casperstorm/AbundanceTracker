@@ -7,6 +7,8 @@ local TRACKED_HOT_SPELL_IDS = {
     [774] = true,
     [155777] = true,
 }
+local REJUVENATION_SPELL_ID = 774
+local GERMINATION_SPELL_ID = 155777
 local HELPFUL_FILTER = "HELPFUL"
 local MAX_UNIT_AURAS = 40
 local MAX_STACKS = 12
@@ -47,17 +49,23 @@ local function GetTrackedUnits()
     return trackedUnits
 end
 
-local function AddTrackedExpiration(expirations, seenAuras, spellKey, expirationTime, duration, maxDurationRef)
+local function ClearArray(values)
+    for index = #values, 1, -1 do
+        values[index] = nil
+    end
+end
+
+local function ClearMap(values)
+    for key in pairs(values) do
+        values[key] = nil
+    end
+end
+
+local function AppendExpiration(expirations, expirationTime, duration, maxDurationRef)
     if not expirationTime or expirationTime <= GetTime() then
         return false
     end
 
-    local dedupeKey = tostring(spellKey) .. ":" .. tostring(math.floor((expirationTime * 100) + 0.5))
-    if seenAuras[dedupeKey] then
-        return false
-    end
-
-    seenAuras[dedupeKey] = true
     expirations[#expirations + 1] = expirationTime
     maxDurationRef.value = math.max(maxDurationRef.value or 0, duration or 0)
     return true
@@ -99,54 +107,77 @@ local function IsPlayerTrackedAura(auraData)
     return true, spellId
 end
 
-local function AddTrackedAuraData(expirations, seenAuras, auraData, maxDurationRef)
+local function ResetTrackedAuraState(auraState)
+    auraState.rejuvExpiration = 0
+    auraState.rejuvDuration = 0
+    auraState.germExpiration = 0
+    auraState.germDuration = 0
+end
+
+local function AddTrackedAuraData(auraState, auraData)
     local isTracked, spellId = IsPlayerTrackedAura(auraData)
     if not isTracked then
         return false
     end
 
-    local auraInstanceID = rawget(auraData, "auraInstanceID")
-    local dedupeKey = auraInstanceID or spellId
-    return AddTrackedExpiration(expirations, seenAuras, dedupeKey, auraData.expirationTime, auraData.duration, maxDurationRef)
+    local expirationTime = rawget(auraData, "expirationTime") or 0
+    local duration = rawget(auraData, "duration") or 0
+
+    if spellId == REJUVENATION_SPELL_ID then
+        if expirationTime > (auraState.rejuvExpiration or 0) then
+            auraState.rejuvExpiration = expirationTime
+            auraState.rejuvDuration = duration
+        end
+        return true
+    end
+
+    if spellId == GERMINATION_SPELL_ID then
+        if expirationTime > (auraState.germExpiration or 0) then
+            auraState.germExpiration = expirationTime
+            auraState.germDuration = duration
+        end
+        return true
+    end
+
+    return false
+end
+
+local function AppendTrackedAuraState(expirations, auraState, maxDurationRef)
+    AppendExpiration(expirations, auraState.rejuvExpiration, auraState.rejuvDuration, maxDurationRef)
+    AppendExpiration(expirations, auraState.germExpiration, auraState.germDuration, maxDurationRef)
 end
 
 local AuraScanState = {
-    expirations = nil,
-    seenAuras = nil,
-    maxDurationRef = nil,
+    trackedAuras = nil,
 }
 
 local function ForEachTrackedHelpfulAura(auraData)
     local state = AuraScanState
-    AddTrackedAuraData(state.expirations, state.seenAuras, auraData, state.maxDurationRef)
+    AddTrackedAuraData(state.trackedAuras, auraData)
     return false
 end
 
-local function CollectUnitAuraExpirations(unit, expirations, maxDurationRef)
+local function ScanUnitTrackedAuras(unit, auraState)
+    ResetTrackedAuraState(auraState)
+
     if not UnitExists(unit) then
         return
     end
-
-    local seenAuras = {}
 
     if C_UnitAuras and C_UnitAuras.GetUnitAuras then
         local helpfulAuras = C_UnitAuras.GetUnitAuras(unit, HELPFUL_FILTER, MAX_UNIT_AURAS)
         if helpfulAuras then
             for _, auraData in ipairs(helpfulAuras) do
-                AddTrackedAuraData(expirations, seenAuras, auraData, maxDurationRef)
+                AddTrackedAuraData(auraState, auraData)
             end
             return
         end
     end
 
     if AuraUtil and AuraUtil.ForEachAura then
-        AuraScanState.expirations = expirations
-        AuraScanState.seenAuras = seenAuras
-        AuraScanState.maxDurationRef = maxDurationRef
+        AuraScanState.trackedAuras = auraState
         AuraUtil.ForEachAura(unit, HELPFUL_FILTER, nil, ForEachTrackedHelpfulAura, true)
-        AuraScanState.expirations = nil
-        AuraScanState.seenAuras = nil
-        AuraScanState.maxDurationRef = nil
+        AuraScanState.trackedAuras = nil
         return
     end
 
@@ -157,88 +188,31 @@ local function CollectUnitAuraExpirations(unit, expirations, maxDurationRef)
                 break
             end
 
-            AddTrackedAuraData(expirations, seenAuras, auraData, maxDurationRef)
+            AddTrackedAuraData(auraState, auraData)
         end
     end
 end
 
-local function GetTimelineData(expirations, maxDuration)
-    local now = GetTime()
-    local remainingDurations = {}
+local function SortDescending(a, b)
+    return a > b
+end
 
-    for _, expirationTime in ipairs(expirations or {}) do
-        local remaining = expirationTime - now
-        if remaining > 0 then
-            remainingDurations[#remainingDurations + 1] = remaining
+local function CountDurationsInRange(remainingDurations, startTime, endTime)
+    local countInRange = 0
+    for index = 1, #remainingDurations do
+        local duration = remainingDurations[index]
+        if duration > startTime and duration <= endTime then
+            countInRange = countInRange + 1
         end
     end
+    return countInRange
+end
 
-    table.sort(remainingDurations, function(a, b)
-        return a > b
-    end)
-
-    local totalActive = #remainingDurations
-    local currentCount = math.min(totalActive, MAX_STACKS)
-    local dangerThreshold, warningThreshold = GetThresholdConfig()
-    local totalDuration = math.max(maxDuration or 0, remainingDurations[1] or 0)
-
-    if currentCount == 0 then
-        return {
-            count = 0,
-            totalActive = 0,
-            segments = {},
-            totalDuration = totalDuration,
-        }
-    end
-
-    local segments = {}
-    local healthyDuration = currentCount >= warningThreshold and math.min(remainingDurations[warningThreshold] or 0, totalDuration) or 0
-    local warningDuration = currentCount >= dangerThreshold and math.min(remainingDurations[dangerThreshold] or 0, totalDuration) or 0
-    local dangerDuration = math.min(remainingDurations[1] or 0, totalDuration)
-
-    local function CountDurationsInRange(startTime, endTime)
-        local countInRange = 0
-        for _, duration in ipairs(remainingDurations) do
-            if duration > startTime and duration <= endTime then
-                countInRange = countInRange + 1
-            end
-        end
-        return countInRange
-    end
-
-    if healthyDuration > 0 then
-        segments[#segments + 1] = {
-            color = "healthy",
-            startTime = 0,
-            endTime = healthyDuration,
-            stackCount = CountDurationsInRange(0, healthyDuration),
-        }
-    end
-
-    if warningDuration > healthyDuration then
-        segments[#segments + 1] = {
-            color = "warning",
-            startTime = healthyDuration,
-            endTime = warningDuration,
-            stackCount = CountDurationsInRange(healthyDuration, warningDuration),
-        }
-    end
-
-    if dangerDuration > warningDuration then
-        segments[#segments + 1] = {
-            color = "danger",
-            startTime = warningDuration,
-            endTime = dangerDuration,
-            stackCount = CountDurationsInRange(warningDuration, dangerDuration),
-        }
-    end
-
-    return {
-        count = currentCount,
-        totalActive = totalActive,
-        segments = segments,
-        totalDuration = totalDuration,
-    }
+local function SetTimelineSegment(segment, color, startTime, endTime, stackCount)
+    segment.color = color
+    segment.startTime = startTime
+    segment.endTime = endTime
+    segment.stackCount = stackCount
 end
 
 local function GetAbundanceBuffInfo()
@@ -273,45 +247,177 @@ local function FormatSeconds(value)
     return tostring(math.ceil(value))
 end
 
-function Addon:GetAbundanceCount()
-    self.seenUnits = self.seenUnits or {}
+function Addon:RebuildExpirationsFromCache()
     self.expirations = self.expirations or {}
+    self.maxDurationRef = self.maxDurationRef or { value = 0 }
+
+    local expirations = self.expirations
+    local maxDurationRef = self.maxDurationRef
+    maxDurationRef.value = 0
+    ClearArray(expirations)
+
+    if self.unitAuraCache then
+        for _, auraState in pairs(self.unitAuraCache) do
+            AppendTrackedAuraState(expirations, auraState, maxDurationRef)
+        end
+    end
+
+    self.maxDuration = maxDurationRef.value
+end
+
+function Addon:RefreshAbundanceBuff()
+    local abundanceCount, abundanceExpiration = GetAbundanceBuffInfo()
+    self.abundanceCount = math.min(abundanceCount or 0, MAX_STACKS)
+    self.abundanceExpiration = abundanceExpiration or 0
+end
+
+function Addon:ScanTrackedUnit(unit)
+    self.unitAuraCache = self.unitAuraCache or {}
+
+    local guid = UnitGUID(unit)
+    if not guid then
+        return false
+    end
+
+    local auraState = self.unitAuraCache[guid]
+    if not auraState then
+        auraState = {}
+        self.unitAuraCache[guid] = auraState
+    end
+
+    ScanUnitTrackedAuras(unit, auraState)
+    return true
+end
+
+function Addon:RefreshAllTrackedUnits()
+    self.seenUnits = self.seenUnits or {}
+    self.activeGuids = self.activeGuids or {}
+    self.unitAuraCache = self.unitAuraCache or {}
 
     local seen = self.seenUnits
-    local expirations = self.expirations
-    local maxDurationRef = { value = 0 }
-
-    for key in pairs(seen) do
-        seen[key] = nil
-    end
-
-    for index = #expirations, 1, -1 do
-        expirations[index] = nil
-    end
+    local activeGuids = self.activeGuids
+    ClearMap(seen)
+    ClearMap(activeGuids)
 
     for _, unit in ipairs(GetTrackedUnits()) do
         local guid = UnitGUID(unit)
         if guid and not seen[guid] then
             seen[guid] = true
-            CollectUnitAuraExpirations(unit, expirations, maxDurationRef)
+            activeGuids[guid] = true
+            self:ScanTrackedUnit(unit)
         end
     end
 
-    local abundanceCount, abundanceExpiration = GetAbundanceBuffInfo()
-
-    self.abundanceCount = math.min(abundanceCount or 0, MAX_STACKS)
-    self.abundanceExpiration = abundanceExpiration or 0
-
-    self.maxDuration = maxDurationRef.value
-    local timeline = GetTimelineData(expirations, self.maxDuration)
-
-    if self.abundanceCount > 0 and self.abundanceExpiration > GetTime() then
-        self.displayCount = self.abundanceCount
-    else
-        self.displayCount = timeline.count
+    for guid in pairs(self.unitAuraCache) do
+        if not activeGuids[guid] then
+            self.unitAuraCache[guid] = nil
+        end
     end
 
-    return self.displayCount
+    self:RebuildExpirationsFromCache()
+    self:RefreshAbundanceBuff()
+end
+
+function Addon:RefreshTrackedUnit(unit)
+    if not unit or not (UnitIsUnit(unit, "player") or UnitInParty(unit) or UnitInRaid(unit)) then
+        return
+    end
+
+    if self:ScanTrackedUnit(unit) then
+        self:RebuildExpirationsFromCache()
+    end
+
+    if UnitIsUnit(unit, "player") then
+        self:RefreshAbundanceBuff()
+    end
+end
+
+function Addon:GetAbundanceCount()
+    self:RefreshAllTrackedUnits()
+    return self.abundanceCount
+end
+
+function Addon:GetTimelineData()
+    self.timelineData = self.timelineData or {
+        remainingDurations = {},
+        segments = {
+            {},
+            {},
+            {},
+        },
+        segmentCount = 0,
+        count = 0,
+        totalActive = 0,
+        totalDuration = 0,
+    }
+
+    local timeline = self.timelineData
+    local remainingDurations = timeline.remainingDurations
+    ClearArray(remainingDurations)
+
+    local now = GetTime()
+    local expirations = self.expirations or {}
+    for index = 1, #expirations do
+        local remaining = expirations[index] - now
+        if remaining > 0 then
+            remainingDurations[#remainingDurations + 1] = remaining
+        end
+    end
+
+    table.sort(remainingDurations, SortDescending)
+
+    local totalActive = #remainingDurations
+    local currentCount = math.min(totalActive, MAX_STACKS)
+    local dangerThreshold, warningThreshold = GetThresholdConfig()
+    local totalDuration = math.max(self.maxDuration or 0, remainingDurations[1] or 0)
+
+    timeline.count = currentCount
+    timeline.totalActive = totalActive
+    timeline.totalDuration = totalDuration
+    timeline.segmentCount = 0
+
+    if currentCount == 0 then
+        return timeline
+    end
+
+    local healthyDuration = currentCount >= warningThreshold and math.min(remainingDurations[warningThreshold] or 0, totalDuration) or 0
+    local warningDuration = currentCount >= dangerThreshold and math.min(remainingDurations[dangerThreshold] or 0, totalDuration) or 0
+    local dangerDuration = math.min(remainingDurations[1] or 0, totalDuration)
+
+    if healthyDuration > 0 then
+        timeline.segmentCount = timeline.segmentCount + 1
+        SetTimelineSegment(
+            timeline.segments[timeline.segmentCount],
+            "healthy",
+            0,
+            healthyDuration,
+            CountDurationsInRange(remainingDurations, 0, healthyDuration)
+        )
+    end
+
+    if warningDuration > healthyDuration then
+        timeline.segmentCount = timeline.segmentCount + 1
+        SetTimelineSegment(
+            timeline.segments[timeline.segmentCount],
+            "warning",
+            healthyDuration,
+            warningDuration,
+            CountDurationsInRange(remainingDurations, healthyDuration, warningDuration)
+        )
+    end
+
+    if dangerDuration > warningDuration then
+        timeline.segmentCount = timeline.segmentCount + 1
+        SetTimelineSegment(
+            timeline.segments[timeline.segmentCount],
+            "danger",
+            warningDuration,
+            dangerDuration,
+            CountDurationsInRange(remainingDurations, warningDuration, dangerDuration)
+        )
+    end
+
+    return timeline
 end
 
 local function GetSegmentColor(count)
@@ -449,21 +555,9 @@ function Addon:UpdateTimelineVisuals()
         return
     end
 
-    local timeline = GetTimelineData(self.expirations or {}, self.maxDuration or 0)
-    local count = self.displayCount or timeline.count
-    local known = HasAbundanceTalent()
-    local inCombatOnly = self:GetSetting("inCombatOnly") == true
-    local shouldShow = count > 0 or (known and self:GetSetting("showWhenInactive"))
-
-    if inCombatOnly and not InCombatLockdown() then
-        shouldShow = false
-    end
-
-    if not shouldShow then
-        self.bar:Hide()
-        return
-    end
-
+    local timeline = self:GetTimelineData()
+    local abundanceActive = (self.abundanceCount or 0) > 0 and (self.abundanceExpiration or 0) > GetTime()
+    local count = abundanceActive and self.abundanceCount or timeline.count
     self.bar:Show()
     self.bar.countText:SetText(tostring(count))
     if self:GetSetting("showCounter") ~= false then
@@ -477,12 +571,18 @@ function Addon:UpdateTimelineVisuals()
     local frameWidthUnit = barWidth / totalDuration
     local minInsideWidth = 24
     local previousLabelRight = -math.huge
-    local lastLabelByColor = {}
+    self.lastLabelByColor = self.lastLabelByColor or {}
+    self.seenLabels = self.seenLabels or {}
+    local lastLabelByColor = self.lastLabelByColor
+    local seenLabels = self.seenLabels
+    ClearMap(lastLabelByColor)
+    ClearMap(seenLabels)
     local showTimers = self:GetSetting("showTimers") ~= false
     local showStackLabels = self:GetSetting("showStackLabels") == true
     local stackLabelOffset = self:GetSetting("stackLabelOffset") or 4
 
-    for index, data in ipairs(timeline.segments) do
+    for index = 1, timeline.segmentCount do
+        local data = timeline.segments[index]
         local segment = self.bar.segments[index]
         local leftOffset = data.startTime * frameWidthUnit
         local rightOffset = data.endTime * frameWidthUnit
@@ -535,8 +635,7 @@ function Addon:UpdateTimelineVisuals()
         end
     end
 
-    local seenLabels = {}
-    for index = #timeline.segments, 1, -1 do
+    for index = timeline.segmentCount, 1, -1 do
         local data = timeline.segments[index]
         local segment = self.bar.segments[index]
         local winningLabel = lastLabelByColor[GetSegmentColorKey(data.color)]
@@ -550,7 +649,7 @@ function Addon:UpdateTimelineVisuals()
         end
     end
 
-    for index = #timeline.segments + 1, #self.bar.segments do
+    for index = timeline.segmentCount + 1, #self.bar.segments do
         self.bar.segments[index]:Hide()
         self.bar.segments[index].label:Hide()
         self.bar.segments[index].stackLabel:Hide()
@@ -566,8 +665,8 @@ function Addon:UpdateBar()
         return
     end
 
-    self:GetAbundanceCount()
     self:UpdateTimelineVisuals()
+    self.visualDirty = false
 end
 
 function Addon:RefreshBar()
@@ -657,32 +756,40 @@ function Addon:InitializeBar()
     self.eventFrame:RegisterEvent("UNIT_PHASE")
     self.eventFrame:RegisterEvent("UNIT_CONNECTION")
     self.eventFrame:SetScript("OnEvent", function(_, event, unit)
-        if (event ~= "UNIT_AURA" and event ~= "UNIT_PHASE" and event ~= "UNIT_CONNECTION")
-            or not unit
-            or UnitInParty(unit)
-            or UnitInRaid(unit)
-            or UnitIsUnit(unit, "player") then
-            Addon:UpdateBar()
+        if event == "UNIT_AURA" then
+            if unit and (UnitInParty(unit) or UnitInRaid(unit) or UnitIsUnit(unit, "player")) then
+                Addon:RefreshTrackedUnit(unit)
+                Addon.visualDirty = true
+            end
+        elseif event == "UNIT_PHASE" or event == "UNIT_CONNECTION" then
+            Addon:RefreshAllTrackedUnits()
+            Addon.visualDirty = true
+        else
+            Addon:RefreshAllTrackedUnits()
+            Addon.visualDirty = true
         end
     end)
 
     bar.visualElapsed = 0
-    bar.scanElapsed = 0
+    bar.hiddenRefreshElapsed = 0
     bar:SetScript("OnUpdate", function(_, elapsed)
         bar.visualElapsed = bar.visualElapsed + elapsed
-        bar.scanElapsed = bar.scanElapsed + elapsed
+        bar.hiddenRefreshElapsed = bar.hiddenRefreshElapsed + elapsed
 
-        if bar.scanElapsed >= 0.1 then
-            bar.scanElapsed = 0
-            Addon:GetAbundanceCount()
+        if bar.hiddenRefreshElapsed >= 0.2 and not bar:IsShown() then
+            bar.hiddenRefreshElapsed = 0
+            Addon:RefreshAllTrackedUnits()
+            Addon.visualDirty = true
         end
 
-        if bar.visualElapsed >= 0.03 then
+        if bar.visualElapsed >= 0.03 and (Addon.visualDirty or bar:IsShown()) then
             bar.visualElapsed = 0
-            Addon:UpdateTimelineVisuals()
+            Addon:UpdateBar()
         end
     end)
 
     self:ApplyLayout()
+    self.visualDirty = true
+    self:RefreshAllTrackedUnits()
     self:UpdateBar()
 end

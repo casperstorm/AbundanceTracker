@@ -95,10 +95,6 @@ local function CreateConfigFrame()
     local y = 0
     CreateCheckbox(content, "Lock bar position", "locked", y)
     y = y - 35
-    CreateCheckbox(content, "Show bar at 0 stacks", "showWhenInactive", y)
-    y = y - 40
-    CreateCheckbox(content, "Hide when out of combat", "inCombatOnly", y)
-    y = y - 40
     CreateCheckbox(content, "Show stack counter", "showCounter", y)
     y = y - 40
     CreateCheckbox(content, "Show timer labels", "showTimers", y)

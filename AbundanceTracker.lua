@@ -9,8 +9,6 @@ local defaults = {
     scale = 1,
     width = 200,
     height = 15,
-    showWhenInactive = true,
-    inCombatOnly = false,
     showCounter = true,
     showTimers = true,
     showStackLabels = false,
@@ -33,6 +31,9 @@ local function InitializeDB()
             AbundanceTrackerDB[key] = value
         end
     end
+
+    AbundanceTrackerDB.showWhenInactive = nil
+    AbundanceTrackerDB.inCombatOnly = nil
 end
 
 function Addon:GetSetting(key)
