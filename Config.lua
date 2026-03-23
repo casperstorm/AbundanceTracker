@@ -72,6 +72,48 @@ local function CreateSlider(parent, label, dbKey, minVal, maxVal, step, yOffset,
     return container
 end
 
+local function GetDropdownLabel(options, value)
+    for _, option in ipairs(options) do
+        if option.value == value then
+            return option.label
+        end
+    end
+
+    return options[1] and options[1].label or ""
+end
+
+local function CreateDropdown(parent, label, dbKey, options, yOffset)
+    local container = CreateFrame("Frame", nil, parent)
+    container:SetPoint("TOPLEFT", 0, yOffset)
+    container:SetPoint("TOPRIGHT", 0, yOffset)
+    container:SetHeight(52)
+
+    local labelText = container:CreateFontString(nil, "ARTWORK", "GameFontHighlight")
+    labelText:SetPoint("TOPLEFT", 0, 0)
+    labelText:SetText(label)
+
+    local dropdown = CreateFrame("Frame", nil, container, "UIDropDownMenuTemplate")
+    dropdown:SetPoint("TOPLEFT", labelText, "BOTTOMLEFT", -16, -6)
+    UIDropDownMenu_SetWidth(dropdown, 160)
+    UIDropDownMenu_SetText(dropdown, GetDropdownLabel(options, Addon:GetSetting(dbKey)))
+
+    UIDropDownMenu_Initialize(dropdown, function(self, level)
+        for _, option in ipairs(options) do
+            local info = UIDropDownMenu_CreateInfo()
+            info.text = option.label
+            info.value = option.value
+            info.checked = Addon:GetSetting(dbKey) == option.value
+            info.func = function()
+                Addon:SetSetting(dbKey, option.value)
+                UIDropDownMenu_SetText(dropdown, option.label)
+            end
+            UIDropDownMenu_AddButton(info, level)
+        end
+    end)
+
+    return container
+end
+
 local function CreateConfigFrame()
     local frame = CreateFrame("Frame", "AbundanceTrackerConfigFrame", UIParent, "BasicFrameTemplateWithInset")
     frame:SetSize(420, 700)
@@ -95,6 +137,11 @@ local function CreateConfigFrame()
     local y = 0
     CreateCheckbox(content, "Lock bar position", "locked", y)
     y = y - 35
+    CreateDropdown(content, "Visibility", "visibilityMode", {
+        { label = "Always", value = "always" },
+        { label = "Raid Only", value = "raid" },
+    }, y)
+    y = y - 62
     CreateCheckbox(content, "Show stack counter", "showCounter", y)
     y = y - 40
     CreateCheckbox(content, "Show timer labels", "showTimers", y)

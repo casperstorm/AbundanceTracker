@@ -1,6 +1,7 @@
 local _, Addon = ...
 
 local issecretvalue = issecretvalue
+local IsAuraFilteredOutByInstanceID = C_UnitAuras and C_UnitAuras.IsAuraFilteredOutByInstanceID
 
 local ABUNDANCE_SPELL_ID = 207383
 local TRACKED_HOT_SPELL_IDS = {
@@ -10,11 +11,28 @@ local TRACKED_HOT_SPELL_IDS = {
 local REJUVENATION_SPELL_ID = 774
 local GERMINATION_SPELL_ID = 155777
 local HELPFUL_FILTER = "HELPFUL"
+local PLAYER_HELPFUL_FILTER = "HELPFUL|PLAYER"
 local MAX_UNIT_AURAS = 40
 local MAX_STACKS = 12
 
 local ABUNDANCE_SPELL_NAME = C_Spell and C_Spell.GetSpellName and C_Spell.GetSpellName(ABUNDANCE_SPELL_ID) or GetSpellInfo(ABUNDANCE_SPELL_ID)
 local GetThresholdConfig
+
+local function ScheduleDelayedFullRefresh()
+    if not C_Timer or not C_Timer.After then
+        return
+    end
+
+    C_Timer.After(0.1, function()
+        Addon:RefreshAllTrackedUnits()
+        Addon.visualDirty = true
+    end)
+
+    C_Timer.After(0.5, function()
+        Addon:RefreshAllTrackedUnits()
+        Addon.visualDirty = true
+    end)
+end
 
 local function HasAbundanceTalent()
     if IsSpellKnownOrOverridesKnown and IsSpellKnownOrOverridesKnown(ABUNDANCE_SPELL_ID) then
@@ -88,10 +106,18 @@ local function GetTrackedSpellId(auraData)
     return nil
 end
 
-local function IsPlayerTrackedAura(auraData)
+local function IsPlayerTrackedAura(unit, auraData)
     local spellId = GetTrackedSpellId(auraData)
     if not spellId then
         return false
+    end
+
+    local auraInstanceID = rawget(auraData, "auraInstanceID")
+    if unit and auraInstanceID and IsAuraFilteredOutByInstanceID then
+        local ok, isFilteredOut = pcall(IsAuraFilteredOutByInstanceID, unit, auraInstanceID, PLAYER_HELPFUL_FILTER)
+        if ok then
+            return not isFilteredOut, spellId
+        end
     end
 
     local isFromPlayer = rawget(auraData, "isFromPlayerOrPlayerPet")
@@ -104,7 +130,7 @@ local function IsPlayerTrackedAura(auraData)
         return UnitIsUnit(sourceUnit, "player"), spellId
     end
 
-    return true, spellId
+    return false
 end
 
 local function ResetTrackedAuraState(auraState)
@@ -114,8 +140,8 @@ local function ResetTrackedAuraState(auraState)
     auraState.germDuration = 0
 end
 
-local function AddTrackedAuraData(auraState, auraData)
-    local isTracked, spellId = IsPlayerTrackedAura(auraData)
+local function AddTrackedAuraData(unit, auraState, auraData)
+    local isTracked, spellId = IsPlayerTrackedAura(unit, auraData)
     if not isTracked then
         return false
     end
@@ -153,7 +179,7 @@ local AuraScanState = {
 
 local function ForEachTrackedHelpfulAura(auraData)
     local state = AuraScanState
-    AddTrackedAuraData(state.trackedAuras, auraData)
+    AddTrackedAuraData(state.unit, state.trackedAuras, auraData)
     return false
 end
 
@@ -168,15 +194,17 @@ local function ScanUnitTrackedAuras(unit, auraState)
         local helpfulAuras = C_UnitAuras.GetUnitAuras(unit, HELPFUL_FILTER, MAX_UNIT_AURAS)
         if helpfulAuras then
             for _, auraData in ipairs(helpfulAuras) do
-                AddTrackedAuraData(auraState, auraData)
+                AddTrackedAuraData(unit, auraState, auraData)
             end
             return
         end
     end
 
     if AuraUtil and AuraUtil.ForEachAura then
+        AuraScanState.unit = unit
         AuraScanState.trackedAuras = auraState
         AuraUtil.ForEachAura(unit, HELPFUL_FILTER, nil, ForEachTrackedHelpfulAura, true)
+        AuraScanState.unit = nil
         AuraScanState.trackedAuras = nil
         return
     end
@@ -188,7 +216,7 @@ local function ScanUnitTrackedAuras(unit, auraState)
                 break
             end
 
-            AddTrackedAuraData(auraState, auraData)
+            AddTrackedAuraData(unit, auraState, auraData)
         end
     end
 end
@@ -330,6 +358,19 @@ function Addon:RefreshTrackedUnit(unit)
     if UnitIsUnit(unit, "player") then
         self:RefreshAbundanceBuff()
     end
+end
+
+function Addon:ClearTrackedUnitCache()
+    self.unitAuraCache = self.unitAuraCache or {}
+    self.expirations = self.expirations or {}
+    self.maxDurationRef = self.maxDurationRef or { value = 0 }
+
+    ClearMap(self.unitAuraCache)
+    ClearArray(self.expirations)
+    self.maxDurationRef.value = 0
+    self.maxDuration = 0
+    self.abundanceCount = 0
+    self.abundanceExpiration = 0
 end
 
 function Addon:GetAbundanceCount()
@@ -480,6 +521,16 @@ local function GetSegmentColorLegacy(index)
     return 0.72, 0.18, 0.18, 0.95
 end
 
+function Addon:ShouldShowBar()
+    local visibilityMode = self:GetSetting("visibilityMode") or "always"
+
+    if visibilityMode == "raid" then
+        return IsInRaid()
+    end
+
+    return true
+end
+
 function Addon:ApplyLayout()
     if not self.bar then
         return
@@ -556,9 +607,7 @@ function Addon:UpdateTimelineVisuals()
     end
 
     local timeline = self:GetTimelineData()
-    local abundanceActive = (self.abundanceCount or 0) > 0 and (self.abundanceExpiration or 0) > GetTime()
-    local count = abundanceActive and self.abundanceCount or timeline.count
-    self.bar:Show()
+    local count = timeline.count
     self.bar.countText:SetText(tostring(count))
     if self:GetSetting("showCounter") ~= false then
         self.bar.countText:Show()
@@ -665,6 +714,14 @@ function Addon:UpdateBar()
         return
     end
 
+    if not self:ShouldShowBar() then
+        self.bar:Hide()
+        self.visualDirty = false
+        return
+    end
+
+    self.bar:Show()
+
     self:UpdateTimelineVisuals()
     self.visualDirty = false
 end
@@ -752,6 +809,10 @@ function Addon:InitializeBar()
     self.eventFrame:RegisterEvent("PLAYER_TALENT_UPDATE")
     self.eventFrame:RegisterEvent("PLAYER_REGEN_DISABLED")
     self.eventFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
+    self.eventFrame:RegisterEvent("PLAYER_DEAD")
+    self.eventFrame:RegisterEvent("PLAYER_ALIVE")
+    self.eventFrame:RegisterEvent("PLAYER_UNGHOST")
+    self.eventFrame:RegisterEvent("UNIT_OTHER_PARTY_CHANGED")
     self.eventFrame:RegisterEvent("UNIT_AURA")
     self.eventFrame:RegisterEvent("UNIT_PHASE")
     self.eventFrame:RegisterEvent("UNIT_CONNECTION")
@@ -761,12 +822,21 @@ function Addon:InitializeBar()
                 Addon:RefreshTrackedUnit(unit)
                 Addon.visualDirty = true
             end
-        elseif event == "UNIT_PHASE" or event == "UNIT_CONNECTION" then
+        elseif event == "PLAYER_DEAD" then
+            Addon:ClearTrackedUnitCache()
+            Addon.visualDirty = true
+        elseif event == "PLAYER_ALIVE" or event == "PLAYER_UNGHOST" then
             Addon:RefreshAllTrackedUnits()
             Addon.visualDirty = true
+            ScheduleDelayedFullRefresh()
+        elseif event == "UNIT_PHASE" or event == "UNIT_CONNECTION" or event == "UNIT_OTHER_PARTY_CHANGED" then
+            Addon:RefreshAllTrackedUnits()
+            Addon.visualDirty = true
+            ScheduleDelayedFullRefresh()
         else
             Addon:RefreshAllTrackedUnits()
             Addon.visualDirty = true
+            ScheduleDelayedFullRefresh()
         end
     end)
 

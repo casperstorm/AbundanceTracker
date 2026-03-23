@@ -2,6 +2,7 @@ local addonName, Addon = ...
 
 local defaults = {
     locked = false,
+    visibilityMode = "always",
     point = "CENTER",
     relativePoint = "CENTER",
     x = 0,
