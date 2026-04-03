@@ -176,14 +176,14 @@ local function CreateConfigFrame()
     progressionDropdownContainer = CreateDropdown(content, "Progression", "progressDirection", function()
         if Addon:GetSetting("orientation") == "vertical" then
             return {
-                { label = "Bottom > Top", value = "forward" },
                 { label = "Top > Bottom", value = "reverse" },
+                { label = "Bottom > Top", value = "forward" },
             }
         end
 
         return {
-            { label = "Right > Left", value = "forward" },
             { label = "Left > Right", value = "reverse" },
+            { label = "Right > Left", value = "forward" },
         }
     end, y)
     y = y - 62

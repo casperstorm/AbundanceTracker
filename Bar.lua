@@ -120,18 +120,6 @@ local function ScheduleDelayedFullRefresh()
     end)
 end
 
-local function HasAbundanceTalent()
-    if IsSpellKnownOrOverridesKnown and IsSpellKnownOrOverridesKnown(ABUNDANCE_SPELL_ID) then
-        return true
-    end
-
-    if IsPlayerSpell and IsPlayerSpell(ABUNDANCE_SPELL_ID) then
-        return true
-    end
-
-    return false
-end
-
 local trackedUnits = { "player" }
 
 local function GetTrackedUnits()
@@ -712,10 +700,6 @@ function Addon:ApplyLayout()
     end
 end
 
-local function GetBarsContainerWidth(bar)
-    return GetBarsContainerLength(bar)
-end
-
 function Addon:UpdateTimelineVisuals()
     if not self.bar then
         return
@@ -730,7 +714,7 @@ function Addon:UpdateTimelineVisuals()
         self.bar.countText:Hide()
     end
 
-    local barLength = GetBarsContainerWidth(self.bar)
+    local barLength = GetBarsContainerLength(self.bar)
     local totalDuration = math.max(timeline.totalDuration, 0.001)
     local frameWidthUnit = barLength / totalDuration
     local minInsideWidth = 24
