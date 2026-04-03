@@ -838,6 +838,10 @@ function Addon:InitializeBar()
             Addon.visualDirty = true
             ScheduleDelayedFullRefresh()
         end
+
+        if Addon.bar and not Addon.bar:IsShown() then
+            Addon:UpdateBar()
+        end
     end)
 
     bar.visualElapsed = 0

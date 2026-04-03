@@ -99,13 +99,15 @@ local function CreateDropdown(parent, label, dbKey, options, yOffset)
 
     UIDropDownMenu_Initialize(dropdown, function(self, level)
         for _, option in ipairs(options) do
+            local optionValue = option.value
+            local optionLabel = option.label
             local info = UIDropDownMenu_CreateInfo()
-            info.text = option.label
-            info.value = option.value
-            info.checked = Addon:GetSetting(dbKey) == option.value
+            info.text = optionLabel
+            info.value = optionValue
+            info.checked = Addon:GetSetting(dbKey) == optionValue
             info.func = function()
-                Addon:SetSetting(dbKey, option.value)
-                UIDropDownMenu_SetText(dropdown, option.label)
+                Addon:SetSetting(dbKey, optionValue)
+                UIDropDownMenu_SetText(dropdown, optionLabel)
             end
             UIDropDownMenu_AddButton(info, level)
         end
