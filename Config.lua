@@ -1,6 +1,16 @@
 local _, Addon = ...
 
 local configFrame = nil
+local progressionDropdownContainer = nil
+local counterDropdownContainer = nil
+
+local function ResolveDropdownOptions(options)
+    if type(options) == "function" then
+        return options()
+    end
+
+    return options
+end
 
 local function CreateCheckbox(parent, label, dbKey, yOffset)
     local checkbox = CreateFrame("CheckButton", nil, parent, "InterfaceOptionsCheckButtonTemplate")
@@ -73,6 +83,8 @@ local function CreateSlider(parent, label, dbKey, minVal, maxVal, step, yOffset,
 end
 
 local function GetDropdownLabel(options, value)
+    options = ResolveDropdownOptions(options)
+
     for _, option in ipairs(options) do
         if option.value == value then
             return option.label
@@ -97,8 +109,12 @@ local function CreateDropdown(parent, label, dbKey, options, yOffset)
     UIDropDownMenu_SetWidth(dropdown, 160)
     UIDropDownMenu_SetText(dropdown, GetDropdownLabel(options, Addon:GetSetting(dbKey)))
 
+    container.RefreshText = function()
+        UIDropDownMenu_SetText(dropdown, GetDropdownLabel(options, Addon:GetSetting(dbKey)))
+    end
+
     UIDropDownMenu_Initialize(dropdown, function(self, level)
-        for _, option in ipairs(options) do
+        for _, option in ipairs(ResolveDropdownOptions(options)) do
             local optionValue = option.value
             local optionLabel = option.label
             local info = UIDropDownMenu_CreateInfo()
@@ -108,6 +124,14 @@ local function CreateDropdown(parent, label, dbKey, options, yOffset)
             info.func = function()
                 Addon:SetSetting(dbKey, optionValue)
                 UIDropDownMenu_SetText(dropdown, optionLabel)
+
+                if dbKey == "orientation" and progressionDropdownContainer and progressionDropdownContainer.RefreshText then
+                    progressionDropdownContainer:RefreshText()
+                end
+
+                if dbKey == "orientation" and counterDropdownContainer and counterDropdownContainer.RefreshText then
+                    counterDropdownContainer:RefreshText()
+                end
             end
             UIDropDownMenu_AddButton(info, level)
         end
@@ -118,7 +142,7 @@ end
 
 local function CreateConfigFrame()
     local frame = CreateFrame("Frame", "AbundanceTrackerConfigFrame", UIParent, "BasicFrameTemplateWithInset")
-    frame:SetSize(420, 700)
+    frame:SetSize(420, 820)
     frame:SetPoint("CENTER")
     frame:SetMovable(true)
     frame:EnableMouse(true)
@@ -144,8 +168,41 @@ local function CreateConfigFrame()
         { label = "Raid Only", value = "raid" },
     }, y)
     y = y - 62
-    CreateCheckbox(content, "Show stack counter", "showCounter", y)
-    y = y - 40
+    CreateDropdown(content, "Orientation", "orientation", {
+        { label = "Horizontal", value = "horizontal" },
+        { label = "Vertical", value = "vertical" },
+    }, y)
+    y = y - 62
+    progressionDropdownContainer = CreateDropdown(content, "Progression", "progressDirection", function()
+        if Addon:GetSetting("orientation") == "vertical" then
+            return {
+                { label = "Bottom > Top", value = "forward" },
+                { label = "Top > Bottom", value = "reverse" },
+            }
+        end
+
+        return {
+            { label = "Right > Left", value = "forward" },
+            { label = "Left > Right", value = "reverse" },
+        }
+    end, y)
+    y = y - 62
+    counterDropdownContainer = CreateDropdown(content, "Stack Counter", "counterPosition", function()
+        if Addon:GetSetting("orientation") == "vertical" then
+            return {
+                { label = "Bottom", value = "bottom" },
+                { label = "Top", value = "top" },
+                { label = "Hide", value = "hide" },
+            }
+        end
+
+        return {
+            { label = "Left", value = "left" },
+            { label = "Right", value = "right" },
+            { label = "Hide", value = "hide" },
+        }
+    end, y)
+    y = y - 62
     CreateCheckbox(content, "Show timer labels", "showTimers", y)
     y = y - 40
     CreateCheckbox(content, "Show stack labels", "showStackLabels", y)

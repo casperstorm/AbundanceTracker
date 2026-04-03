@@ -3,6 +3,9 @@ local addonName, Addon = ...
 local defaults = {
     locked = false,
     visibilityMode = "always",
+    orientation = "horizontal",
+    progressDirection = "forward",
+    counterPosition = "left",
     point = "CENTER",
     relativePoint = "CENTER",
     x = 0,
@@ -10,7 +13,6 @@ local defaults = {
     scale = 1,
     width = 200,
     height = 15,
-    showCounter = true,
     showTimers = true,
     showStackLabels = false,
     stackLabelOffset = 4,
@@ -33,8 +35,19 @@ local function InitializeDB()
         end
     end
 
+    if AbundanceTrackerDB.counterPosition == nil then
+        if AbundanceTrackerDB.showCounter == false then
+            AbundanceTrackerDB.counterPosition = "hide"
+        elseif AbundanceTrackerDB.orientation == "vertical" then
+            AbundanceTrackerDB.counterPosition = "bottom"
+        else
+            AbundanceTrackerDB.counterPosition = "left"
+        end
+    end
+
     AbundanceTrackerDB.showWhenInactive = nil
     AbundanceTrackerDB.inCombatOnly = nil
+    AbundanceTrackerDB.showCounter = nil
 end
 
 function Addon:GetSetting(key)

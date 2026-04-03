@@ -18,6 +18,92 @@ local MAX_STACKS = 12
 local ABUNDANCE_SPELL_NAME = C_Spell and C_Spell.GetSpellName and C_Spell.GetSpellName(ABUNDANCE_SPELL_ID) or GetSpellInfo(ABUNDANCE_SPELL_ID)
 local GetThresholdConfig
 
+local function IsVerticalOrientation()
+    return Addon:GetSetting("orientation") == "vertical"
+end
+
+local function IsReverseProgression()
+    return Addon:GetSetting("progressDirection") == "reverse"
+end
+
+local function GetBarDimensions()
+    local width = Addon:GetSetting("width") or 240
+    local height = Addon:GetSetting("height") or 22
+
+    if IsVerticalOrientation() then
+        return height, width
+    end
+
+    return width, height
+end
+
+local function GetCounterSize()
+    local barWidth, barHeight = GetBarDimensions()
+
+    if IsVerticalOrientation() then
+        return barWidth
+    end
+
+    return barHeight
+end
+
+local function GetCounterPosition()
+    local vertical = IsVerticalOrientation()
+    local position = Addon:GetSetting("counterPosition")
+
+    if vertical then
+        if position == "top" or position == "bottom" or position == "hide" then
+            return position
+        end
+
+        return position == "hide" and "hide" or "bottom"
+    end
+
+    if position == "left" or position == "right" or position == "hide" then
+        return position
+    end
+
+    return position == "hide" and "hide" or "left"
+end
+
+local function GetBarsContainerLength(bar)
+    if not bar then
+        return 1
+    end
+
+    local showCounter = GetCounterPosition() ~= "hide"
+    local counterSize = showCounter and GetCounterSize() or 0
+
+    if IsVerticalOrientation() then
+        return math.max((bar:GetHeight() or 0) - counterSize - 2, 1)
+    end
+
+    local barsWidth = (bar:GetWidth() or 0) - (counterSize > 0 and (counterSize - 1) or 0)
+    return math.max(barsWidth - 2, 1)
+end
+
+local function GetLabelRange(label, vertical, reverse)
+    if vertical then
+        local top = label:GetTop() or 0
+        local bottom = label:GetBottom() or 0
+
+        if reverse then
+            return bottom, top
+        end
+
+        return -top, -bottom
+    end
+
+    local left = label:GetLeft() or 0
+    local right = label:GetRight() or 0
+
+    if reverse then
+        return -right, -left
+    end
+
+    return left, right
+end
+
 local function ScheduleDelayedFullRefresh()
     if not C_Timer or not C_Timer.After then
         return
@@ -536,6 +622,12 @@ function Addon:ApplyLayout()
         return
     end
 
+    local barWidth, barHeight = GetBarDimensions()
+    local vertical = IsVerticalOrientation()
+    local counterPosition = GetCounterPosition()
+    local showCounter = counterPosition ~= "hide"
+    local counterSize = showCounter and GetCounterSize() or 0
+
     self.bar:ClearAllPoints()
     self.bar:SetPoint(
         self:GetSetting("point") or "CENTER",
@@ -545,31 +637,64 @@ function Addon:ApplyLayout()
         self:GetSetting("y") or -170
     )
     self.bar:SetScale(self:GetSetting("scale") or 1)
-    self.bar:SetSize(self:GetSetting("width") or 240, self:GetSetting("height") or 22)
+    self.bar:SetSize(barWidth, barHeight)
     self.bar:SetMovable(not self:GetSetting("locked"))
     self.bar:EnableMouse(not self:GetSetting("locked"))
 
-    local height = self.bar:GetHeight()
-    local showCounter = self:GetSetting("showCounter") ~= false
-    local counterWidth = showCounter and height or 0
     local counterFontSize = self:GetSetting("counterFontSize") or 12
     local timerFontSize = self:GetSetting("timerFontSize") or 8
     local stackLabelFontSize = self:GetSetting("stackLabelFontSize") or 8
 
     self.bar.countText:SetFont(STANDARD_TEXT_FONT, counterFontSize, "")
 
-    self.bar.bars:ClearAllPoints()
-    self.bar.bars:SetPoint("TOPLEFT", self.bar, "TOPLEFT", counterWidth > 0 and (counterWidth - 1) or 0, 0)
-    self.bar.bars:SetPoint("BOTTOMRIGHT", self.bar, "BOTTOMRIGHT", 0, 0)
-
     self.bar.counter:ClearAllPoints()
     if showCounter then
-        self.bar.counter:SetPoint("TOPLEFT", self.bar, "TOPLEFT", 0, 0)
-        self.bar.counter:SetPoint("BOTTOMLEFT", self.bar, "BOTTOMLEFT", 0, 0)
-        self.bar.counter:SetWidth(counterWidth)
+        if vertical then
+            if counterPosition == "top" then
+                self.bar.counter:SetPoint("TOPLEFT", self.bar, "TOPLEFT", 0, 0)
+                self.bar.counter:SetPoint("TOPRIGHT", self.bar, "TOPRIGHT", 0, 0)
+            else
+                self.bar.counter:SetPoint("BOTTOMLEFT", self.bar, "BOTTOMLEFT", 0, 0)
+                self.bar.counter:SetPoint("BOTTOMRIGHT", self.bar, "BOTTOMRIGHT", 0, 0)
+            end
+            self.bar.counter:SetHeight(counterSize)
+        else
+            if counterPosition == "right" then
+                self.bar.counter:SetPoint("TOPRIGHT", self.bar, "TOPRIGHT", 0, 0)
+                self.bar.counter:SetPoint("BOTTOMRIGHT", self.bar, "BOTTOMRIGHT", 0, 0)
+            else
+                self.bar.counter:SetPoint("TOPLEFT", self.bar, "TOPLEFT", 0, 0)
+                self.bar.counter:SetPoint("BOTTOMLEFT", self.bar, "BOTTOMLEFT", 0, 0)
+            end
+            self.bar.counter:SetWidth(counterSize)
+        end
         self.bar.counter:Show()
     else
         self.bar.counter:Hide()
+    end
+
+    self.bar.bars:ClearAllPoints()
+    if vertical then
+        if showCounter and counterPosition == "top" then
+            self.bar.bars:SetPoint("TOPLEFT", self.bar.counter, "BOTTOMLEFT", 0, 0)
+            self.bar.bars:SetPoint("TOPRIGHT", self.bar.counter, "BOTTOMRIGHT", 0, 0)
+            self.bar.bars:SetPoint("BOTTOMRIGHT", self.bar, "BOTTOMRIGHT", 0, 0)
+        elseif showCounter and counterPosition == "bottom" then
+            self.bar.bars:SetPoint("TOPLEFT", self.bar, "TOPLEFT", 0, 0)
+            self.bar.bars:SetPoint("BOTTOMRIGHT", self.bar.counter, "TOPRIGHT", 0, 0)
+        else
+            self.bar.bars:SetPoint("TOPLEFT", self.bar, "TOPLEFT", 0, 0)
+            self.bar.bars:SetPoint("BOTTOMRIGHT", self.bar, "BOTTOMRIGHT", 0, 0)
+        end
+    else
+        if showCounter and counterPosition == "right" then
+            self.bar.bars:SetPoint("TOPLEFT", self.bar, "TOPLEFT", 0, 0)
+            self.bar.bars:SetPoint("BOTTOMLEFT", self.bar, "BOTTOMLEFT", 0, 0)
+            self.bar.bars:SetPoint("RIGHT", self.bar.counter, "LEFT", 0, 0)
+        else
+            self.bar.bars:SetPoint("TOPLEFT", self.bar, "TOPLEFT", counterSize > 0 and (counterSize - 1) or 0, 0)
+            self.bar.bars:SetPoint("BOTTOMRIGHT", self.bar, "BOTTOMRIGHT", 0, 0)
+        end
     end
 
     self.bar.barscontainer:ClearAllPoints()
@@ -588,17 +713,7 @@ function Addon:ApplyLayout()
 end
 
 local function GetBarsContainerWidth(bar)
-    if not bar then
-        return 1
-    end
-
-    local configuredWidth = Addon:GetSetting("width") or bar:GetWidth() or 240
-    local configuredHeight = Addon:GetSetting("height") or bar:GetHeight() or 22
-    local showCounter = Addon:GetSetting("showCounter") ~= false
-    local counterWidth = showCounter and configuredHeight or 0
-    local barsWidth = configuredWidth - (counterWidth > 0 and (counterWidth - 1) or 0)
-
-    return math.max(barsWidth - 2, 1)
+    return GetBarsContainerLength(bar)
 end
 
 function Addon:UpdateTimelineVisuals()
@@ -609,17 +724,19 @@ function Addon:UpdateTimelineVisuals()
     local timeline = self:GetTimelineData()
     local count = timeline.count
     self.bar.countText:SetText(tostring(count))
-    if self:GetSetting("showCounter") ~= false then
+    if GetCounterPosition() ~= "hide" then
         self.bar.countText:Show()
     else
         self.bar.countText:Hide()
     end
 
-    local barWidth = GetBarsContainerWidth(self.bar)
+    local barLength = GetBarsContainerWidth(self.bar)
     local totalDuration = math.max(timeline.totalDuration, 0.001)
-    local frameWidthUnit = barWidth / totalDuration
+    local frameWidthUnit = barLength / totalDuration
     local minInsideWidth = 24
-    local previousLabelRight = -math.huge
+    local vertical = IsVerticalOrientation()
+    local reverse = IsReverseProgression()
+    local previousLabelEdge = nil
     self.lastLabelByColor = self.lastLabelByColor or {}
     self.seenLabels = self.seenLabels or {}
     local lastLabelByColor = self.lastLabelByColor
@@ -633,43 +750,66 @@ function Addon:UpdateTimelineVisuals()
     for index = 1, timeline.segmentCount do
         local data = timeline.segments[index]
         local segment = self.bar.segments[index]
-        local leftOffset = data.startTime * frameWidthUnit
-        local rightOffset = data.endTime * frameWidthUnit
+        local startOffset = data.startTime * frameWidthUnit
+        local endOffset = data.endTime * frameWidthUnit
 
-        if rightOffset - leftOffset > 0.5 then
+        if endOffset - startOffset > 0.5 then
             local r, g, b, a = GetSegmentColorForBand(data.color)
             segment:SetVertexColor(r, g, b, a)
             segment:ClearAllPoints()
-            segment:SetPoint("TOPLEFT", self.bar.barscontainer, "TOPLEFT", leftOffset, 0)
-            segment:SetPoint("BOTTOMLEFT", self.bar.barscontainer, "BOTTOMLEFT", leftOffset, 0)
-            segment:SetPoint("RIGHT", self.bar.barscontainer, "LEFT", rightOffset, 0)
+            if vertical then
+                if reverse then
+                    segment:SetPoint("BOTTOMLEFT", self.bar.barscontainer, "BOTTOMLEFT", 0, startOffset)
+                    segment:SetPoint("BOTTOMRIGHT", self.bar.barscontainer, "BOTTOMRIGHT", 0, startOffset)
+                    segment:SetPoint("TOPLEFT", self.bar.barscontainer, "BOTTOMLEFT", 0, endOffset)
+                    segment:SetPoint("TOPRIGHT", self.bar.barscontainer, "BOTTOMRIGHT", 0, endOffset)
+                else
+                    segment:SetPoint("TOPLEFT", self.bar.barscontainer, "TOPLEFT", 0, -startOffset)
+                    segment:SetPoint("TOPRIGHT", self.bar.barscontainer, "TOPRIGHT", 0, -startOffset)
+                    segment:SetPoint("BOTTOMLEFT", self.bar.barscontainer, "TOPLEFT", 0, -endOffset)
+                    segment:SetPoint("BOTTOMRIGHT", self.bar.barscontainer, "TOPRIGHT", 0, -endOffset)
+                end
+            else
+                if reverse then
+                    segment:SetPoint("TOPRIGHT", self.bar.barscontainer, "TOPRIGHT", -startOffset, 0)
+                    segment:SetPoint("BOTTOMRIGHT", self.bar.barscontainer, "BOTTOMRIGHT", -startOffset, 0)
+                    segment:SetPoint("LEFT", self.bar.barscontainer, "RIGHT", -endOffset, 0)
+                else
+                    segment:SetPoint("TOPLEFT", self.bar.barscontainer, "TOPLEFT", startOffset, 0)
+                    segment:SetPoint("BOTTOMLEFT", self.bar.barscontainer, "BOTTOMLEFT", startOffset, 0)
+                    segment:SetPoint("RIGHT", self.bar.barscontainer, "LEFT", endOffset, 0)
+                end
+            end
             segment:Show()
 
             segment.label:SetText(FormatSeconds(data.endTime))
             segment.label:ClearAllPoints()
-            local segmentWidth = segment:GetWidth()
-            if segmentWidth >= minInsideWidth then
+            local segmentExtent = vertical and segment:GetHeight() or segment:GetWidth()
+            if segmentExtent >= minInsideWidth then
                 segment.label:SetPoint("CENTER", segment, "CENTER", 0, 0)
             else
-                segment.label:SetPoint("LEFT", segment, "RIGHT", 3, 0)
+                if reverse and not vertical then
+                    segment.label:SetPoint("RIGHT", segment, "LEFT", -3, 0)
+                else
+                    segment.label:SetPoint("LEFT", segment, "RIGHT", 3, 0)
+                end
             end
 
             segment.stackLabel:SetText(tostring(data.stackCount or 0))
             segment.stackLabel:ClearAllPoints()
-            if segmentWidth >= minInsideWidth then
+            if segmentExtent >= minInsideWidth then
                 segment.stackLabel:SetPoint("TOP", segment.label, "BOTTOM", 0, -stackLabelOffset)
             else
                 segment.stackLabel:SetPoint("TOPLEFT", segment.label, "BOTTOMLEFT", 0, -stackLabelOffset)
             end
 
-            local labelLeft = segment.label:GetLeft() or 0
-            local labelRight = segment.label:GetRight() or 0
-            if not showTimers or labelLeft <= previousLabelRight then
+            local labelStart, labelEnd = GetLabelRange(segment.label, vertical, reverse)
+            if not showTimers or (previousLabelEdge ~= nil and labelStart <= previousLabelEdge) then
                 segment.label:Hide()
                 segment.stackLabel:Hide()
             else
                 segment.label:Show()
-                previousLabelRight = labelRight
+                previousLabelEdge = labelEnd
                 lastLabelByColor[GetSegmentColorKey(data.color)] = segment.label
                 if showStackLabels then
                     segment.stackLabel:Show()
