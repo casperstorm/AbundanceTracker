@@ -3,6 +3,7 @@ local addonName, Addon = ...
 local defaults = {
     locked = false,
     visibilityMode = "always",
+    onlyShowWithAbundanceTalent = true,
     orientation = "horizontal",
     progressDirection = "forward",
     counterPosition = "left",

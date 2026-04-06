@@ -337,6 +337,10 @@ local function GetAbundanceBuffInfo()
     return count or 0, expirationTime or 0, duration or 0
 end
 
+local function PlayerHasAbundanceTalent()
+    return IsPlayerSpell and IsPlayerSpell(ABUNDANCE_SPELL_ID) == true
+end
+
 local function FormatSeconds(value)
     if Addon:GetSetting("showDecimalTimers") == false then
         return tostring(math.ceil(value))
@@ -597,6 +601,10 @@ end
 
 function Addon:ShouldShowBar()
     local visibilityMode = self:GetSetting("visibilityMode") or "always"
+
+    if self:GetSetting("onlyShowWithAbundanceTalent") ~= false and not PlayerHasAbundanceTalent() then
+        return false
+    end
 
     if visibilityMode == "raid" then
         return IsInRaid()

@@ -168,6 +168,8 @@ local function CreateConfigFrame()
         { label = "Raid Only", value = "raid" },
     }, y)
     y = y - 62
+    CreateCheckbox(content, "Only show when you have the talent Abundance", "onlyShowWithAbundanceTalent", y)
+    y = y - 40
     CreateDropdown(content, "Orientation", "orientation", {
         { label = "Horizontal", value = "horizontal" },
         { label = "Vertical", value = "vertical" },
