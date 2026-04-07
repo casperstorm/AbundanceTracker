@@ -37,6 +37,22 @@ local function GetBarDimensions()
     return width, height
 end
 
+local function IsPlayerUnitToken(unit)
+    return unit == "player"
+end
+
+local function IsTrackedUnitToken(unit)
+    if unit == "player" then
+        return true
+    end
+
+    if type(unit) ~= "string" then
+        return false
+    end
+
+    return unit:match("^party%d+$") ~= nil or unit:match("^raid%d+$") ~= nil
+end
+
 local function GetCounterSize()
     local barWidth, barHeight = GetBarDimensions()
 
@@ -201,7 +217,7 @@ local function IsPlayerTrackedAura(unit, auraData)
 
     local sourceUnit = rawget(auraData, "sourceUnit")
     if sourceUnit then
-        return UnitIsUnit(sourceUnit, "player"), spellId
+        return IsPlayerUnitToken(sourceUnit), spellId
     end
 
     return false
@@ -425,7 +441,7 @@ function Addon:RefreshAllTrackedUnits()
 end
 
 function Addon:RefreshTrackedUnit(unit)
-    if not unit or not (UnitIsUnit(unit, "player") or UnitInParty(unit) or UnitInRaid(unit)) then
+    if not IsTrackedUnitToken(unit) then
         return
     end
 
@@ -433,7 +449,7 @@ function Addon:RefreshTrackedUnit(unit)
         self:RebuildExpirationsFromCache()
     end
 
-    if UnitIsUnit(unit, "player") then
+    if IsPlayerUnitToken(unit) then
         self:RefreshAbundanceBuff()
     end
 end
@@ -950,7 +966,7 @@ function Addon:InitializeBar()
     self.eventFrame:RegisterEvent("UNIT_CONNECTION")
     self.eventFrame:SetScript("OnEvent", function(_, event, unit)
         if event == "UNIT_AURA" then
-            if unit and (UnitInParty(unit) or UnitInRaid(unit) or UnitIsUnit(unit, "player")) then
+            if IsTrackedUnitToken(unit) then
                 Addon:RefreshTrackedUnit(unit)
                 Addon.visualDirty = true
             end
